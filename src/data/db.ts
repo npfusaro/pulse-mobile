@@ -5,7 +5,7 @@
 import { deleteDatabaseAsync, openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { isDeadConnection } from "./deadConnection";
 import type { CoachChatRow, DayRange, EntrySource, JournalTagChange, JournalTagRow, LoggedEntryRow, ReportRow, ScoreRow, SeriesKind, Store } from "./store";
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, StepsMinute, SyncState } from "./types";
+import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
 import { slice } from "@/lib/yield";
 
@@ -37,6 +37,7 @@ create index if not exists exercises_day on exercises (day);
 create table if not exists hr_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists steps_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists hrv_days (bucket integer primary key, offsets text not null, vals text not null);
+create table if not exists spo2_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists daily_values (day text not null, key text not null, value real not null, primary key (day, key));
 create table if not exists journal_entries (day text not null, tag text not null, value real not null, primary key (day, tag));
 create table if not exists intraday_dirty (day text primary key);
@@ -333,6 +334,15 @@ class SqliteStore implements Store {
   async putHrv(samples: HrvSample[]) {
     await this.putSamples("hrv_days", samples.map((s) => ({ ts: s.ts, v: s.ms })));
   }
+  async replaceSpo2(fromTs: number, toTs: number, samples: Spo2Sample[]) {
+    await this.tx(async (db) => {
+      if (toTs > fromTs) await this.dropSamples(db, "spo2_days", fromTs, toTs);
+    });
+    await this.putSamples("spo2_days", samples.map((s) => ({ ts: s.ts, v: s.pct })));
+  }
+  async clearSpo2() {
+    await this.tx((db) => db.runAsync("delete from spo2_days"));
+  }
 
   /** Merges samples into their UTC-day buckets, replacing by ts, in one transaction. */
   private async putSamples(table: SampleTable, samples: { ts: number; v: number }[]) {
@@ -522,9 +532,19 @@ class SqliteStore implements Store {
     return (await this.readSamples("hrv_days", lo, hi)).map((s) => ({ ts: s.ts, ms: s.v }));
   }
   async hrBounds() {
+    return this.bounds("hr_days");
+  }
+  async readSpo2(lo: number, hi: number) {
+    return (await this.readSamples("spo2_days", lo, hi)).map((s) => ({ ts: s.ts, pct: s.v }));
+  }
+  async spo2Bounds() {
+    return this.bounds("spo2_days");
+  }
+  /** The first and last sample time of a bucketed table, reading only its two end rows. */
+  private async bounds(table: SampleTable) {
     const [lo, hi] = await Promise.all([
-      this.db.getFirstAsync<BucketRow>("select bucket, offsets, vals from hr_days order by bucket limit 1"),
-      this.db.getFirstAsync<BucketRow>("select bucket, offsets, vals from hr_days order by bucket desc limit 1"),
+      this.db.getFirstAsync<BucketRow>(`select bucket, offsets, vals from ${table} order by bucket limit 1`),
+      this.db.getFirstAsync<BucketRow>(`select bucket, offsets, vals from ${table} order by bucket desc limit 1`),
     ]);
     if (!lo || !hi) return null;
     const first = JSON.parse(lo.offsets) as number[];
@@ -690,10 +710,10 @@ class SqliteStore implements Store {
 }
 
 /** The bucketed sample tables: one row per UTC day of parallel offset and value arrays. */
-type SampleTable = "hr_days" | "steps_days" | "hrv_days";
+type SampleTable = "hr_days" | "steps_days" | "hrv_days" | "spo2_days";
 
 const TABLES = [
-  "profile", "sync_state", "daily_metrics", "sleep_sessions", "sleep_segments", "exercises", "hr_days", "steps_days", "hrv_days", "daily_values",
+  "profile", "sync_state", "daily_metrics", "sleep_sessions", "sleep_segments", "exercises", "hr_days", "steps_days", "hrv_days", "spo2_days", "daily_values",
   "journal_entries", "intraday_dirty", "daily_scores", "intraday_series", "reports", "activity_cost",
   "journal_tags", "logged_entries", "health_records",
 ];

@@ -27,6 +27,7 @@ import {
   daySpansOf,
   exercisesBetween,
 } from "./common";
+import { lastNightSpo2 } from "./bloodOxygen";
 import { illnessRaised, VITAL_LABEL } from "./home";
 import { zoneBounds, zoneNote, zoneRows } from "./strain";
 import type {
@@ -55,12 +56,13 @@ export async function getHealthHub(ctx: QueryCtx): Promise<HealthHubVM> {
   const today = todayOf(ctx);
   const rows = await loadDays(ctx, addDays(today, -35), today);
   const row = rows.get(today);
-  const [hsVm, monitor, fit, stressSeries, heartRate] = await Promise.all([
+  const [hsVm, monitor, fit, stressSeries, heartRate, bloodOxygen] = await Promise.all([
     getHealthspan(today, ctx),
     getMonitor(today, ctx, rows),
     getFitness(ctx),
     loadSeries(ctx, today, "stress"),
     latestHr(ctx),
+    lastNightSpo2(ctx, row),
   ]);
   const hs = hsVm.result;
   // Healthspan updates weekly: compare the shown week's pace with the stored week before it.
@@ -92,6 +94,7 @@ export async function getHealthHub(ctx: QueryCtx): Promise<HealthHubVM> {
       ? ok({ vo2max: fit.vo2.value.value, category: fit.vo2.value.category, percentile: fit.vo2.value.percentile, acwr: tl?.acwr ?? null, acwrTone: tl?.tone ?? null })
       : none("no_data"),
     heartRate,
+    bloodOxygen,
   };
 }
 

@@ -1,6 +1,6 @@
 // The storage contract every layer talks to: the importer writes rows, the pipeline reads rows and writes scores,
 // the screen queries read both. One implementation on expo-sqlite (db.ts); tests may use an in-memory one.
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, StepsMinute, SyncState } from "./types";
+import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { Stage1Activity, Stage1Day, Stage2Row } from "@/pipeline/types";
 import type { Report } from "@/core/algorithms/reports";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
@@ -24,6 +24,14 @@ export interface Store {
   putSteps(minutes: StepsMinute[]): Promise<void>;
   /** HRV samples, keyed by ts like heart rate; re-imports overwrite. */
   putHrv(samples: HrvSample[]): Promise<void>;
+  /**
+   * Blood-oxygen samples from the Google Health API (src/google), keyed by ts. Inside [fromTs, toTs) the stored samples
+   * become exactly `samples` (a reading Google no longer returns was deleted upstream); outside, they stay. A Health
+   * Connect re-import never touches them (clearImported), since they come from the other source.
+   */
+  replaceSpo2(fromTs: number, toTs: number, samples: Spo2Sample[]): Promise<void>;
+  /** Drops every blood-oxygen sample (Google disconnected). */
+  clearSpo2(): Promise<void>;
   upsertDailyValues(rows: DailyValue[]): Promise<void>;
   setJournal(entry: JournalEntry): Promise<void>;
   deleteJournal(day: string, tag: string): Promise<void>;
@@ -59,6 +67,9 @@ export interface Store {
   /** HRV with lo <= ts < hi, ascending. */
   readHrv(lo: number, hi: number): Promise<HrvSample[]>;
   hrBounds(): Promise<{ first: number; last: number } | null>;
+  /** Blood oxygen with lo <= ts < hi, ascending. */
+  readSpo2(lo: number, hi: number): Promise<Spo2Sample[]>;
+  spo2Bounds(): Promise<{ first: number; last: number } | null>;
 
   // Scores (JSON blobs per day, the pipeline's memo and the screens' source)
   getScores(day: string): Promise<ScoreRow | null>;

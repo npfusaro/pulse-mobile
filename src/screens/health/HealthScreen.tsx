@@ -232,6 +232,19 @@ function HeartRate({ hr, now }: { hr: HealthHubVM["heartRate"]; now: number }) {
   );
 }
 
+/** Last night's average with its low (fork): the band's minute readings from Google, which Fitbit's own app never shows. */
+function BloodOxygen({ o }: { o: HealthHubVM["bloodOxygen"] }) {
+  if (!o) return <Text className={EMPTY}>Your band’s minute-by-minute blood oxygen, from Google. It shows here once Google is connected in Settings and last night has synced.</Text>;
+  return (
+    <View className="gap-1">
+      <ValueUnit value={o.average.toFixed(1)} unit="%" className={TILE} />
+      <Text className={CAPTION}>
+        Last night · low <Text className="font-numeric font-bold tabular-nums text-foreground">{o.low}%</Text>
+      </Text>
+    </View>
+  );
+}
+
 const FOOTNOTE = "Estimates for personal insight, not medical advice.";
 
 /** The way to Nutrition (spec §7.22): static, so the hub's query stays as it is. */
@@ -268,6 +281,9 @@ export function HealthScreen() {
         </SectionShell>
         <SectionShell variant="card" title="Heart rate" href="/health/heart-rate">
           <HeartRate hr={vm.heartRate} now={now} />
+        </SectionShell>
+        <SectionShell variant="card" title="Blood oxygen" href="/health/blood-oxygen">
+          <BloodOxygen o={vm.bloodOxygen} />
         </SectionShell>
         {NUTRITION_CARD}
       </View>
@@ -341,6 +357,12 @@ function HealthLoading() {
           <View accessibilityElementsHidden className="gap-1">
             <SkeletonText lh={40} fs={36} className="w-[75px]" />
             <SkeletonText lh={16} fs={12} className="w-28" />
+          </View>
+        </SectionShell>
+        <SectionShell variant="card" title="Blood oxygen" href="/health/blood-oxygen">
+          <View accessibilityElementsHidden className="gap-1">
+            <SkeletonText lh={40} fs={36} className="w-[95px]" />
+            <SkeletonText lh={16} fs={12} className="w-32" />
           </View>
         </SectionShell>
         {NUTRITION_CARD}

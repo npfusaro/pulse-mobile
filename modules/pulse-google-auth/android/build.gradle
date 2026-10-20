@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.pulse'
+version = '1.0.0'
+
+android {
+  namespace "app.pulse.googleauth"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Identity.getAuthorizationClient: Google's supported way for an Android app to get an OAuth access token with
+  // API scopes. Custom-scheme redirects (the browser flow) are no longer accepted for Android OAuth clients.
+  implementation 'com.google.android.gms:play-services-auth:21.4.0'
+}

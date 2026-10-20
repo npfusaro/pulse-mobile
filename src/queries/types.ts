@@ -359,6 +359,8 @@ export type HealthHubVM = {
   fitness: Metric<{ vo2max: number; category: string; percentile: number; acwr: number | null; acwrTone: ChipTone | null }>;
   /** The newest band reading (epoch ms), today or not. */
   heartRate: { t: number; bpm: number } | null;
+  /** Last night's blood oxygen from the Google source (fork): the average and the lowest minute; null without a night read. */
+  bloodOxygen: { average: number; low: number; wake: number } | null;
 };
 /** Alias: the task's name for the Health hub view model. */
 export type HealthVM = HealthHubVM;
@@ -408,6 +410,25 @@ export type HealthspanVM = {
   /** Pulse Age at each week end. */
   history: DayPoint[];
   contributors: HealthspanContributor[];
+};
+
+/** The band's minute-by-minute blood oxygen across one main sleep (`t` epoch ms; a null minute is a gap). */
+export type NightSpo2 = { bed: number; wake: number; points: TimePoint[] };
+
+/** Blood oxygen `/health/blood-oxygen?d=` (fork): the night ending on `day`, from the Google source. */
+export type BloodOxygenVM = {
+  day: string;
+  isToday: boolean;
+  /** Whether Google is connected at all: without it the screen explains instead of showing empty states. */
+  connected: boolean;
+  /** The night's average: Fitbit's nightly value when Health Connect has one, else the readings' own mean. */
+  average: Metric<number>;
+  /** The lowest minute, the minutes read, and how many sat under 95%. */
+  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number }>;
+  /** Where the average stands against 95–100, the range Fitbit and the Health Monitor use; null without an average. */
+  chip: { tone: ChipTone; text: string } | null;
+  /** The seven nights ending on `day`, oldest first; nulls where the band read nothing. */
+  nights: { day: string; average: number | null; low: number | null; below95Min: number | null }[];
 };
 
 export type MonitorVM = {

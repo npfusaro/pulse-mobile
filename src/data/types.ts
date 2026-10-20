@@ -119,6 +119,11 @@ export type HrSample = { ts: number; bpm: number };
 export type HrvSample = { ts: number; ms: number };
 /** Steps in the minute starting at `ts` (a whole minute, unix seconds). */
 export type StepsMinute = { ts: number; v: number };
+/**
+ * One blood-oxygen reading (percent, one decimal) at `ts`: the band reads SpO2 once a minute while the wearer sleeps and
+ * drops minutes it could not read. Only the Google Health API carries these (Fitbit writes none to Health Connect).
+ */
+export type Spo2Sample = { ts: number; pct: number };
 
 /** "Shown, never scored" extras keyed like Pulse's daily_values (e.g. "distance_m", "floors", "height_cm" on day "latest"). */
 export type DailyValue = { day: string; key: string; value: number };

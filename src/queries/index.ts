@@ -9,7 +9,8 @@
  *   getStrain(day, ctx)                 → StrainVM         Strain: score, target, coach, HR chart, zones, activities, calories, workouts
  *   getActivities(days, ctx)            → ActivitiesVM     Workouts grouped by day, newest first
  *   getActivity(id, ctx)                → ActivityVM|null  One workout: stats, HR window, zones with typicals, HRR
- *   getHealthHub(ctx) / getHealth(ctx)  → HealthHubVM      Health hub: Pulse Age, monitor, stress, fitness, latest HR
+ *   getHealthHub(ctx) / getHealth(ctx)  → HealthHubVM      Health hub: Pulse Age, monitor, stress, fitness, latest HR, last night's SpO2
+ *   getBloodOxygen(day, ctx)            → BloodOxygenVM    Blood oxygen (fork): the night's minute SpO2 from Google, its average, the week
  *   getHealthspan(day, ctx)             → HealthspanVM     Pulse Age for the ISO week, contributors, 26-week history
  *   getMonitor(day, ctx, rows?)         → MonitorVM        Health Monitor: five vitals with ranges, illness, measurements
  *   getStress(day, ctx)                 → StressVM         Stress Monitor: gauge, chart, levels against the same weekday
@@ -68,6 +69,7 @@ export {
   type HrvStatusVM,
 } from "./training";
 export { getHealthHub, getHealth, getHealthspan, getMonitor, getStress, getFitness, getHeartRate, hrMinutes, acwrStatus, ECG_RESULT, NO_RESULT } from "./health";
+export { getBloodOxygen, nightSpo2Of, spo2Chip, SPO2_LOW_PCT } from "./bloodOxygen";
 export { getTrends, parseTrendMetric, TREND_GROUPS, TREND_METRICS, type TrendGroup, type TrendMetric, type TrendMetricKey, type TrendsVM } from "./trends";
 export {
   getMetricDetail,

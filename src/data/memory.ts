@@ -2,7 +2,7 @@
 // restart. Rows are copied on the way in and out (JSON round-trip), so callers never share objects with the
 // store, as they would not with SQLite.
 import type { DayRange, JournalTagChange, JournalTagRow, LoggedEntryRow, ReportRow, ScoreRow, SeriesKind, Store } from "./store";
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, StepsMinute, SyncState } from "./types";
+import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
 
 const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -67,6 +67,7 @@ export class MemoryStore implements Store {
   private hr = new Samples();
   private steps = new Samples();
   private hrv = new Samples();
+  private spo2 = new Samples();
   private values = new Map<string, DailyValue>();
   private journal = new Map<string, JournalEntry>();
   private dirty = new Set<string>();
@@ -115,6 +116,13 @@ export class MemoryStore implements Store {
   }
   async putHrv(samples: HrvSample[]) {
     this.hrv.put(samples.map((s) => ({ ts: s.ts, v: s.ms })));
+  }
+  async replaceSpo2(fromTs: number, toTs: number, samples: Spo2Sample[]) {
+    if (toTs > fromTs) this.spo2.drop(fromTs, toTs);
+    this.spo2.put(samples.map((s) => ({ ts: s.ts, v: s.pct })));
+  }
+  async clearSpo2() {
+    this.spo2.clear();
   }
   async putSteps(minutes: StepsMinute[]) {
     this.steps.put(minutes);
@@ -199,6 +207,12 @@ export class MemoryStore implements Store {
   }
   async hrBounds() {
     return this.hr.bounds();
+  }
+  async readSpo2(lo: number, hi: number) {
+    return this.spo2.read(lo, hi).map((s) => ({ ts: s.ts, pct: s.v }));
+  }
+  async spo2Bounds() {
+    return this.spo2.bounds();
   }
 
   async getScores(day: string) {
@@ -309,6 +323,7 @@ export class MemoryStore implements Store {
     this.hr.clear();
     this.steps.clear();
     this.hrv.clear();
+    this.spo2.clear();
     this.dirty.clear();
   }
 }

@@ -717,3 +717,17 @@ flowchart LR
   HRV --> S1[Stage 1: night mean in sleep, the day's samples]
   S1 --> S2[Stage 2: Recovery, Stress, Energy Bank]
 ```
+
+## Google API access from the app: Play services, not a browser (fork)
+
+Google no longer accepts custom-scheme redirects for Android OAuth clients, so the AppAuth/`expo-auth-session`
+browser flow cannot get an access token for a Google API from a new Android client. The supported way is Google Play
+services' `Identity.getAuthorizationClient`, which matches the app to its Cloud project by package name and signing
+key, shows the consent sheet once (as a pending intent the activity launches), and after that returns a short-lived
+access token silently, with no refresh token on the device. `modules/pulse-google-auth` wraps it as an Expo module:
+`AsyncFunction("authorize")` keeps the `Promise`, launches the resolution with `startIntentSenderForResult`, and
+`OnActivityResult` settles it with `getAuthorizationResultFromIntent`. A non-interactive call (the background task)
+rejects `NEEDS_CONSENT` instead of showing a sheet. The Cloud project needs the Google Health API enabled, the scope on
+the consent screen, and the app published (Testing drops grants after 7 days).
+
+Docs: [Android authorization](https://developer.android.com/identity/authorization), [Expo Modules API](https://docs.expo.dev/modules/module-api/).

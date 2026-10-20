@@ -13,7 +13,7 @@ import { hash, mulberry32 } from "@/core/algorithms/journalImpact";
 import { addDays, localDay, localMidnight } from "@/lib/time";
 import { resolveMaxHr } from "@/pipeline/index";
 import type { Store } from "./store";
-import type { DailyValue, Exercise, HrvSample, Metrics, Profile, Segment, Session } from "./types";
+import type { DailyValue, Exercise, HrvSample, Metrics, Profile, Segment, Session, Spo2Sample } from "./types";
 
 // ---------------------------------------------------------------------------------------------
 // The demo person's story (scenario.ts). Day indices are 0-based from the first seeded day (the anchor), so the
@@ -373,6 +373,24 @@ function hrvSamples(i: number, n: NonNullable<Night>): HrvSample[] {
   return out;
 }
 
+/**
+ * The night's blood-oxygen samples (fork: what the Google source brings), one a minute from bed to wake with about one
+ * in six dropped as the band drops minutes it could not read, around the night's average: a little lower in REM, a
+ * touch higher in deep sleep, the odd short dip. Its own stream, so the rest of the seed reads the same as before.
+ */
+function spo2Samples(i: number, n: NonNullable<Night>): Spo2Sample[] {
+  const r = rng(i, "spo2");
+  const out: Spo2Sample[] = [];
+  for (let t = n.bed; t < n.wake; t += 60) {
+    const stage = n.segments.find((g) => t >= g.start && t < g.end)?.stage ?? "light";
+    if (stage === "awake" || r.chance(0.16)) continue;
+    const shift = stage === "rem" ? -0.4 : stage === "deep" ? 0.2 : 0;
+    const dip = r.chance(0.015) ? r.u(2, 4.5) : 0;
+    out.push({ ts: t, pct: round(clamp(n.metrics.spo2Pct + shift - dip + 0.55 * r.g(), 85, 100), 1) });
+  }
+  return out;
+}
+
 /** Karvonen shares of heart-rate reserve where LIGHT, MODERATE, VIGOROUS and PEAK start (demo values). */
 const ZONE_HRR = [0.4, 0.55, 0.7, 0.85];
 
@@ -635,6 +653,8 @@ export function generateDay(ctx: Ctx, i: number) {
       availableAt: lastNight.wake + SLEEP_SYNC_DELAY_S,
       /** Last night's 5-minute HRV samples, synced with the night. */
       hrv: hrvSamples(i, lastNight),
+      /** Last night's one-a-minute blood oxygen (fork: the Google source's), synced with the night. */
+      spo2: spo2Samples(i, lastNight),
       // Weekly, like Fitbit's resting-HR-based estimate.
       values: { ...lastNight.metrics, vo2maxDaily: i % 7 === 6 ? round(vo2 - 0.8 + 0.3 * r.g(), 1) : null, ...googleDerived(ctx, i, lastNight.rhr) },
     },
@@ -753,6 +773,8 @@ async function writeDays(store: Store, gs: SeedDay[], now: number, checkedIn: Se
   await store.putHr(hr);
   await store.putSteps(steps);
   await store.putHrv(gs.flatMap((g) => (g.nightly && g.nightly.availableAt <= now ? g.nightly.hrv : [])));
+  const spo2 = gs.flatMap((g) => (g.nightly && g.nightly.availableAt <= now ? g.nightly.spo2 : []));
+  if (spo2.length) await store.replaceSpo2(spo2[0].ts, spo2[spo2.length - 1].ts + 1, spo2);
   await store.markIntradayDirty(dirty);
 
   const sleeps = gs.flatMap((g) => g.sleeps.filter((s) => s.availableAt <= now));

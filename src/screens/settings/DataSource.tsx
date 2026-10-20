@@ -9,9 +9,12 @@ import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, wi
 import { Check, ChevronDown, Minus, RefreshCw, TriangleAlert } from "lucide-react-native";
 import { askPermissions, openHealthConnectSettings, permissionState, READ_TYPES, type PermissionState, type ReadType } from "@/health/connect";
 import { runDataCheck } from "@/health/dataCheck";
+import { getHistoryDays, HISTORY_DAY_OPTIONS, historyLabel, setHistoryDays } from "@/health/historyDays";
+import { googleState, type GoogleState } from "@/google/auth";
+import { readGoogleSyncState, type GoogleSyncState } from "@/google/sync";
 import { getSourcePolicy, setSourcePolicy, SOURCE_POLICIES, SOURCE_POLICY_LABELS, type SourcePolicy } from "@/health/sourcePolicy";
 import { ago } from "@/lib/format";
-import { appState, appStore, exploreSample, refresh, reimport, stepLabel, useApp } from "@/state/app";
+import { appState, appStore, connectGoogle, disconnectGoogle, exploreSample, refresh, reimport, stepLabel, useApp } from "@/state/app";
 import { BandIcon } from "@/ui/brand";
 import { HealthConnectMark } from "@/ui/HealthConnectMark";
 import { cn } from "@/ui/cn";
@@ -177,6 +180,140 @@ function SourcePolicyPicker({ syncing }: { syncing: boolean }) {
   );
 }
 
+/**
+ * How far back the sources import (fork addition; was a constant 180). A longer choice re-reads Health Connect's
+ * whole window and walks the Google import from the new start; a shorter one removes nothing already imported.
+ */
+function HistoryPicker({ syncing }: { syncing: boolean }) {
+  const [days, setDays] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getHistoryDays().then((d) => live && setDays(d));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const choose = async (d: number) => {
+    if (d === days || syncing) return;
+    const longer = days !== null && d > days;
+    setDays(d);
+    await setHistoryDays(d);
+    toast.success(longer ? `${historyLabel(d)}: importing the older days` : `History set to ${historyLabel(d)}`);
+    if (longer) void refresh();
+  };
+  const options = HISTORY_DAY_OPTIONS.map((d) => ({ value: String(d), label: d % 365 === 0 ? `${d / 365}y` : `${d}d` }));
+  return (
+    <View className="mt-4 gap-2 border-t border-border pt-4">
+      <Text className={ROW_LABEL}>History</Text>
+      <RadioSegments label="History" value={days === null ? null : String(days)} options={options} onChange={(d) => void choose(Number(d))} />
+      <Text className={HINT}>
+        How far back Pulse imports, from Health Connect and from Google. Neither caps it; Health Connect holds only what the Google Health app wrote into it, so check there if older days stay empty.
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * The Google Health API beside Health Connect (fork addition): the one source of the band's minute-by-minute blood
+ * oxygen, which Fitbit never writes to Health Connect. Google's consent sheet the first time; no account, name or
+ * token is kept on the phone, only that it is connected.
+ */
+function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: string[]; now: number }) {
+  const [state, setState] = useState<GoogleState | null>(null);
+  const [sync, setSync] = useState<GoogleSyncState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const read = useCallback(async () => {
+    const [g, st] = await Promise.all([googleState(), readGoogleSyncState()]);
+    setState(g);
+    setSync(st);
+  }, []);
+  // Re-read when a sync ends: the cursor and last error moved.
+  useEffect(() => {
+    let live = true;
+    void Promise.all([googleState(), readGoogleSyncState()]).then(([g, st]) => {
+      if (!live) return;
+      setState(g);
+      setSync(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, [syncing]);
+  const connect = async () => {
+    setBusy(true);
+    try {
+      await connectGoogle();
+      toast.success("Google connected: importing your blood oxygen");
+    } catch (e) {
+      const code = (e as { code?: string })?.code;
+      toast.error(
+        code === "CANCELLED"
+          ? "Google's consent screen was closed."
+          : code?.startsWith("API_10") || code === "API_10"
+            ? "Google doesn't know this build: register its package name and signing key (docs/google-health.md)."
+            : `Couldn't connect Google (${code ?? "error"}).`,
+      );
+    }
+    setBusy(false);
+    await read();
+  };
+  const disconnect = async () => {
+    setBusy(true);
+    await disconnectGoogle();
+    toast.success("Google disconnected");
+    setBusy(false);
+    await read();
+  };
+  if (state === null) return null;
+  const needsConsent = warnings.includes("google_needs_consent");
+  const failed = warnings.find((w) => w.startsWith("google_error:"))?.slice("google_error:".length);
+  const importing = sync && sync.backfillDays !== null && sync.backfillDone < sync.backfillDays;
+  const last = sync?.lastSuccessAt ? sync.lastSuccessAt * 1000 : null;
+  const line =
+    state === "unavailable"
+      ? "Needs Google Play services"
+      : state === "not_connected"
+        ? "Not connected"
+        : needsConsent
+          ? "Access needed"
+          : importing
+            ? `Importing: ${sync!.backfillDone} of ${sync!.backfillDays} days`
+            : failed
+              ? `Failed (${failed})`
+              : last
+                ? `Synced ${ago(last, Math.max(now, last))}`
+                : "Not synced yet";
+  return (
+    <View className="mt-4 gap-2 border-t border-border pt-4">
+      <Text className={ROW_LABEL}>Google Health</Text>
+      <Text className={cn("text-[15px] leading-[22px]", (needsConsent || failed) && "text-warning-text")}>{line}</Text>
+      <Text className={HINT}>
+        {state === "connected"
+          ? "Reads your band's minute-by-minute blood oxygen, which Fitbit keeps in Google's cloud and never writes to Health Connect. Nothing else; nothing about your account is kept."
+          : state === "unavailable"
+            ? "The Google Health API needs Google Play services, which this phone doesn't have."
+            : "Fitbit shows only a nightly blood-oxygen average. Google's cloud holds every minute the band read; connect to see them on the Blood oxygen screen. Needs this build registered with Google (docs/google-health.md)."}
+      </Text>
+      {state === "connected" ? (
+        <View className="flex-row gap-2">
+          {needsConsent && (
+            <Button className="flex-1" disabled={busy || syncing} onPress={() => void connect()}>
+              Reconnect
+            </Button>
+          )}
+          <Button variant="outline" className="flex-1" disabled={busy || syncing} onPress={() => void disconnect()}>
+            Disconnect
+          </Button>
+        </View>
+      ) : (
+        <Button disabled={busy || syncing || state === "unavailable"} onPress={() => void connect()}>
+          Connect Google
+        </Button>
+      )}
+    </View>
+  );
+}
+
 type Confirm = "sample" | "reimport" | null;
 
 /** The running sync's step and percent. It reads the progress itself, so a tick redraws this line, not the card. */
@@ -308,6 +445,8 @@ export function DataSource({ now }: { now: number }) {
         )}
       </View>
       {hc && <SourcePolicyPicker syncing={syncing} />}
+      {hc && <HistoryPicker syncing={syncing} />}
+      {hc && <GoogleHealth syncing={syncing} warnings={warnings} now={now} />}
       {hc && (
         <View className="mt-4 gap-2 border-t border-border pt-4">
           <Text className={ROW_LABEL}>Data check</Text>
@@ -321,7 +460,7 @@ export function DataSource({ now }: { now: number }) {
       <ConfirmDialog
         open={confirm === "reimport"}
         title="Re-import your history?"
-        description="Pulse reads the last 180 days from Health Connect again and rescores them, for data an app shared late. Your journal and profile stay."
+        description="Pulse reads your whole history window from Health Connect again and rescores it, for data an app shared late. Your journal and profile stay."
         confirmLabel="Re-import"
         pendingLabel="Re-import"
         pending={false}

@@ -17,6 +17,8 @@ import type { Store } from "@/data/store";
 import type { Profile, SyncState } from "@/data/types";
 import { askPermissions, availability, permissionState, type Availability, type PermissionState } from "@/health/connect";
 import { forgetChanges } from "@/health/sync";
+import { connectGoogle as grantGoogle, disconnectGoogle as revokeGoogle } from "@/google/auth";
+import { forgetGoogleSync } from "@/google/sync";
 import { localDay } from "@/lib/time";
 import type { QueryCtx } from "@/queries/ctx";
 import { ensureDefaultTags } from "@/queries/journal";
@@ -295,6 +297,28 @@ export async function connectHealth(): Promise<PermissionState | null> {
 /** Re-imports recent days and rescores (Sync now, pull to sync). Joins a run in flight. */
 export const refresh = (): Promise<void> => run();
 
+/**
+ * Connects the Google Health API beside Health Connect (fork addition): Google's consent sheet for the blood-oxygen
+ * scope, then a sync that starts the SpO2 import. Throws the GoogleAuthError when the owner closes the sheet or the
+ * app isn't registered with Google (docs/google-health.md), for Settings to show.
+ */
+export async function connectGoogle(): Promise<void> {
+  await grantGoogle();
+  patch({ warnings: state.warnings.filter((w) => !w.startsWith("google_")) });
+  await run();
+}
+
+/** Forgets the Google connection and its cursor, revokes the grant and drops the blood-oxygen samples. */
+export async function disconnectGoogle(): Promise<void> {
+  const { store } = state;
+  if (running) await running.catch(() => {});
+  await revokeGoogle();
+  await forgetGoogleSync();
+  await store?.clearSpo2();
+  patch({ warnings: state.warnings.filter((w) => !w.startsWith("google_")) });
+  dataChanged();
+}
+
 /** Re-reads the whole history window from Health Connect (for data an app shared late), then rescores. */
 export async function reimport(): Promise<void> {
   if (state.source === "health_connect") await forgetChanges();
@@ -309,6 +333,8 @@ export async function reset(): Promise<void> {
   deleteAllPhotos();
   await AsyncStorage.multiRemove([SOURCE_KEY, OWN_PROFILE_KEY]).catch(() => {});
   await forgetChanges();
+  await revokeGoogle();
+  await forgetGoogleSync();
   patch({ status: "needs_profile", profile: null, source: null, sync: EMPTY_SYNC, error: null, warnings: [], onboarded: false });
   dataChanged();
 }
@@ -327,6 +353,8 @@ const STEP_LABEL: Record<string, string> = {
 export const stepLabel = (step: string): string =>
   step.startsWith("read:day:")
     ? "Reading Health Connect"
+    : step === "google:spo2"
+      ? "Reading blood oxygen from Google"
     : step.startsWith("read:")
       ? `Reading ${step.slice(5).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()}`
       : (STEP_LABEL[step] ?? step);

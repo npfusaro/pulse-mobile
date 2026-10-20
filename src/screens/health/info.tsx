@@ -78,3 +78,15 @@ export const HEART_RATE_INFO: InfoContent = {
     </>
   ),
 };
+
+/** Fork addition: the Blood oxygen screen (the Google source's minute readings). */
+export const BLOOD_OXYGEN_INFO: InfoContent = {
+  title: "About blood oxygen",
+  body: (
+    <>
+      <P>Your band estimates blood oxygen (SpO2) once a minute while you sleep, from the red and infrared light its sensor shines through your skin. Fitbit keeps every minute in Google’s cloud but shows only a nightly average; Pulse reads the minutes from the Google Health API (Settings › Data source › Google Health).</P>
+      <P>Minutes the band could not read reliably, when you moved or the band sat loose, are left out, so gaps in the chart are normal.</P>
+      <P>Most people sit between 95 and 100% through the night. Brief dips are common and usually mean nothing; a night that stays low, or a trend downward, is worth a conversation with a doctor. This is an estimate, not a medical measurement.</P>
+    </>
+  ),
+};
