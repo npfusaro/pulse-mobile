@@ -1,11 +1,15 @@
 // The sync + scoring run as one function with no React in it, so the app (src/state/app.ts) and the background task
 // (task.ts) do the same thing: take the run lock (lock.ts), import from Health Connect, score, then send the alerts
 // that are due (alerts.ts). Within one JavaScript runtime a second call joins the first; across runtimes the lock keeps
-// the two apart. Copied from halo's src/background/runSync.ts without the Google source.
+// the two apart. Copied from halo's src/background/runSync.ts; this fork adds the Google Health API source (src/google)
+// for the band's blood oxygen, run after Health Connect and never allowed to stop the scoring.
 import { AppState } from "react-native";
 import { openStore } from "@/data/db";
 import type { Store } from "@/data/store";
 import type { Profile } from "@/data/types";
+import { isGoogleConnected } from "@/google/auth";
+import { syncGoogle } from "@/google/sync";
+import { getHistoryDays } from "@/health/historyDays";
 import { syncHealthConnect } from "@/health/sync";
 import { timed } from "@/lib/perf";
 import { localDay } from "@/lib/time";
@@ -81,8 +85,14 @@ async function run(store: Store, profile: Profile, source: Source, opts: RunSync
   const warnings: string[] = [];
   try {
     if (source === "health_connect") {
-      const r = await timed(`sync-health-connect (${opts.owner})`, () => syncHealthConnect(store, { timeZone: opts.timeZone, onProgress: opts.onProgress }));
+      const historyDays = await getHistoryDays();
+      const r = await timed(`sync-health-connect (${opts.owner})`, () => syncHealthConnect(store, { timeZone: opts.timeZone, historyDays, onProgress: opts.onProgress }));
       warnings.push(...(r.warnings ?? []));
+      // Google Health (blood oxygen) beside it: its own cursor and warnings; it throws nothing (sync.ts).
+      if (await isGoogleConnected()) {
+        const g = await timed(`sync-google (${opts.owner})`, () => syncGoogle(store, { timeZone: opts.timeZone, historyDays, onProgress: opts.onProgress }));
+        warnings.push(...g.warnings);
+      }
     }
     await timed(`pipeline (${opts.owner})`, () => runPipeline(store, profile, { today: localDay(Date.now() / 1000, opts.timeZone), onProgress: opts.onProgress }));
     return { ran: true, warnings };
