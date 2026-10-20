@@ -61,7 +61,8 @@ In the [Google Cloud Console](https://console.cloud.google.com/), signed in as t
 
 1. Create a project (any name, e.g. "Pulse").
 2. **APIs & Services › Enable APIs and Services** → search **Google Health API** → Enable.
-3. **Google Auth Platform › Branding**: user type **External**, an app name, your email.
+3. **Google Auth Platform › Branding**: user type **External** (not Internal, even when the console offers it: Internal
+   admits only members of a Workspace organization, and a personal Fitbit account isn't one), an app name, your email.
 4. **Google Auth Platform › Data access** → Add scopes → paste
    `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly` → Update, Save.
 5. **Google Auth Platform › Audience** → add yourself as a test user, then **Publish** the app (In production).
@@ -108,7 +109,7 @@ removes nothing.
 | Toast | Cause |
 |---|---|
 | Google doesn't know this build (`API_10`, DEVELOPER_ERROR) | The package name or SHA-1 registered as the Android client doesn't match the installed build, the Google Health API isn't enabled, or the change hasn't propagated yet. |
-| Google's consent screen was closed | You backed out of the sheet. |
+| Google's consent screen was closed | You backed out of the sheet. If it closed itself right after you picked an account, Google rejected that account and Play services reports only "cancelled": with `adb logcat` showing `This client is restricted to users within its organization`, the audience is **Internal** and the Fitbit account isn't in that organization. Audience › Make external, add the account as a test user (or publish). |
 | Needs Google Play services | A phone without Play services (some Huawei models, custom ROMs without GApps). |
 | Access needed (after it worked) | The grant was revoked, or the app is still in Testing and the 7 days passed. Reconnect. |
 
