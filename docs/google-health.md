@@ -39,10 +39,17 @@ pnpm install
 npx expo run:android --variant release    # phone plugged in with USB debugging, or an emulator
 ```
 
-`expo run:android` generates `android/` (never edit it), builds, signs with the **debug keystore**
-(`~/.android/debug.keystore`, which Android Studio creates) and installs. The release variant is a normal standalone
-APK; the debug keystore only means Google Play would not accept it, which does not matter for a sideload. The APK
-is also at `android/app/build/outputs/apk/release/app-release.apk` for installing on another phone.
+`expo run:android` generates `android/` (never edit it), builds, signs with the **debug keystore Expo generates
+into the project**, `android/app/debug.keystore` (not Android Studio's `~/.android/debug.keystore`: a different
+key), and installs. The release variant is a normal standalone APK; the debug keystore only means Google Play
+would not accept it, which does not matter for a sideload. The APK is also at
+`android/app/build/outputs/apk/release/app-release.apk` for installing on another phone.
+
+On Windows: pnpm's symlinked `node_modules` makes the native build loop (`ninja: manifest 'build.ninja' still
+dirty`), so add `nodeLinker: hoisted` to `pnpm-workspace.yaml` before `pnpm install`; keep the checkout at a short
+path (`C:\pm`); build one architecture (`$env:ORG_GRADLE_PROJECT_reactNativeArchitectures = "arm64-v8a"`); and
+run Gradle directly when the device picker gets in the way: `npx expo prebuild --platform android`, then
+`android\gradlew.bat app:assembleRelease` and `adb install -r` the APK.
 
 If the upstream release of Pulse Mobile is installed, uninstall it first: it has the same package name
 (`in.portlabs.pulse`) under a different signing key, and Android refuses to install over it. The import rebuilds the
@@ -62,11 +69,15 @@ In the [Google Cloud Console](https://console.cloud.google.com/), signed in as t
    shows an "unverified app" screen once when you connect; click through ("Advanced" › continue), it is your own app.
 6. **Clients › Create client** → Application type **Android**:
    - Package name: `in.portlabs.pulse` (or what you set in `app.json`'s `expo.android.package`).
-   - SHA-1 certificate fingerprint: the keystore that signed your build. For the debug keystore:
+   - SHA-1 certificate fingerprint: the keystore that signed your build, which for `expo run:android` is the
+     one Expo generated into the project:
 
      ```sh
-     keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1
+     keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1
      ```
+
+     (`keytool` is in Android Studio's `jbr/bin` when it is not on the PATH.) A mismatch here is what makes
+     Google's consent sheet open and close itself.
 
    Create. No client id or secret goes anywhere; the registration is the whole point.
 
