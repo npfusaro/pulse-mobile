@@ -140,5 +140,6 @@ removes nothing.
 | Google's consent screen was closed | You backed out of the sheet. If it closed itself right after you picked an account, Google rejected that account and Play services reports only "cancelled": with `adb logcat` showing `This client is restricted to users within its organization`, the audience is **Internal** and the Fitbit account isn't in that organization. Audience › Make external, add the account as a test user (or publish). |
 | Needs Google Play services | A phone without Play services (some Huawei models, custom ROMs without GApps). |
 | Access needed (after it worked) | The grant was revoked, or the app is still in Testing and the 7 days passed. Reconnect. |
+| Failed (auth_revoked) | Google answered 401 to a token Play services still hands out: it stops accepting a token when the consent screen it came from changes (scopes added, the audience or publishing status switched) or when a cached token outlived its hour. Not a scope problem (a missing scope is PERMISSION_DENIED). The sync clears the cached token and retries by itself; if it still fails, Disconnect and Connect Google again. |
 
 The last sync's error is in the Google Health block in Settings. No health data or token is ever logged.

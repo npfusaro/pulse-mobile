@@ -7,6 +7,7 @@ import { GoogleAuthError } from "./errors";
 type Native = {
   isAvailable(): boolean;
   authorize(scopes: string[], interactive: boolean): Promise<{ accessToken: string | null; grantedScopes: string[] }>;
+  invalidate(token: string): Promise<void>;
 };
 const native = requireOptionalNativeModule<Native>("PulseGoogleAuth");
 
@@ -41,4 +42,16 @@ export async function authorize(scopes: string[], interactive: boolean): Promise
   const missing = scopes.filter((s) => !granted.has(s));
   if (missing.length) throw new GoogleAuthError("NEEDS_CONSENT", `Google did not grant: ${missing.join(", ")}`);
   return { accessToken: r.accessToken, grantedScopes: r.grantedScopes ?? [] };
+}
+
+/**
+ * Drops a token from Play services' cache, so the next `authorize` fetches a fresh one. For a token the API has
+ * rejected (401): without this, `authorize` keeps returning the rejected token. Never throws.
+ */
+export async function invalidate(token: string): Promise<void> {
+  try {
+    await native?.invalidate(token);
+  } catch {
+    // The cache is best effort: a fresh authorize is tried either way.
+  }
 }

@@ -50,12 +50,19 @@ export async function disconnectGoogle(fetchFn: typeof fetch = fetch): Promise<v
   }
 }
 
+/** The last token handed out, for `accessToken(…, true)` to invalidate once the API has rejected it. */
+let lastToken: string | null = null;
+
 /**
  * A fresh access token for a sync. `interactive` false (the background task) never shows a sheet: a missing grant
- * throws NEEDS_CONSENT, which the sync reports as a warning for Settings to show.
+ * throws NEEDS_CONSENT, which the sync reports as a warning for Settings to show. `retry` true (the client, after a
+ * 401) first drops the last token from Play services' cache, which otherwise hands the rejected token back again.
  */
-export async function accessToken(interactive: boolean): Promise<string> {
-  return (await (await native()).authorize(GOOGLE_SCOPES, interactive)).accessToken;
+export async function accessToken(interactive: boolean, retry = false): Promise<string> {
+  const n = await native();
+  if (retry && lastToken) await n.invalidate(lastToken);
+  lastToken = (await n.authorize(GOOGLE_SCOPES, interactive)).accessToken;
+  return lastToken;
 }
 
 export { GoogleAuthError };

@@ -95,7 +95,7 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
   try {
     // Never interactive: only Settings › Connect Google shows the consent sheet. A grant revoked since then surfaces
     // as the google_needs_consent warning, which Settings turns into "Reconnect".
-    const client = createGoogleClient({ token: opts.token ?? (() => accessToken(false)), fetch: opts.fetch, sleep: opts.sleep, now });
+    const client = createGoogleClient({ token: opts.token ?? ((retry) => accessToken(false, retry)), fetch: opts.fetch, sleep: opts.sleep, now });
     const t = nowS();
     const today = localDay(t, tz);
     const st = await readGoogleSyncState();

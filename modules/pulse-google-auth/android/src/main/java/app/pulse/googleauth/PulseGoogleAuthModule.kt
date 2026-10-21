@@ -2,6 +2,7 @@ package app.pulse.googleauth
 
 import android.app.Activity
 import android.content.Context
+import com.google.android.gms.auth.GoogleAuthUtil
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
@@ -30,6 +31,25 @@ class PulseGoogleAuthModule : Module() {
     Function("isAvailable") {
       val ctx = appContext.reactContext ?: return@Function false
       GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(ctx) == ConnectionResult.SUCCESS
+    }
+
+    /**
+     * Drops `token` from Play services' cache. The AuthorizationClient hands back a cached access token until it is
+     * cleared, and keeps doing so after Google has stopped accepting it (an expiry it missed, a grant reissued after
+     * the consent screen changed): the API answers 401 and a second `authorize` returns the same token. So a 401 is
+     * followed by this, then a fresh `authorize`. Runs off the main thread (Expo's async queue), as clearToken wants.
+     */
+    AsyncFunction("invalidate") { token: String, promise: Promise ->
+      val ctx: Context = appContext.reactContext ?: run {
+        promise.resolve(null)
+        return@AsyncFunction
+      }
+      try {
+        GoogleAuthUtil.clearToken(ctx, token)
+        promise.resolve(null)
+      } catch (e: Exception) {
+        promise.reject("INVALIDATE_FAILED", e.message ?: "could not clear the token", e)
+      }
     }
 
     /**
