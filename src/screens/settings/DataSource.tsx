@@ -291,6 +291,7 @@ function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: 
       <Text className={cn("text-[15px] leading-[22px]", (needsConsent || failed) && "text-warning-text")}>{line}</Text>
       {/* The request that failed and Google's status, as the sync recorded them: which call, and whether it is scope, format or Google. */}
       {failed && sync?.lastError && <Text className={HINT}>{sync.lastError}</Text>}
+      {state === "connected" && sync?.rangesError && <Text className={HINT}>Fitbit’s typical ranges for HRV and resting heart rate aren’t available from Google for this account; the Health Monitor keeps Pulse’s own. Google said: {sync.rangesError}</Text>}
       <Text className={HINT}>
         {state === "connected"
           ? "Reads what Fitbit keeps in Google's cloud and never writes to Health Connect: your band's minute-by-minute blood oxygen, each night's deep-sleep HRV, and Fitbit's own typical ranges for HRV and resting heart rate (the Health Monitor uses them). Nothing about your account is kept."

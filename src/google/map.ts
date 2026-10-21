@@ -1,6 +1,6 @@
 // Google Health API data points → Pulse rows, after the server app's src/server/sources/google/map.ts.
 import type { GoogleDaily, Spo2Sample } from "@/data/types";
-import { ROLLUP_KEY, type RollupTypeId } from "./client";
+import { ROLLUP, type RollupTypeId } from "./client";
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -83,7 +83,7 @@ export function mapPersonalRange(type: RollupTypeId, points: unknown[]): GoogleD
   const byDay = new Map<string, GoogleDaily>();
   for (const p of points) {
     const day = civil(at(p, "civilStartTime.date"));
-    const o = at(p, ROLLUP_KEY[type]);
+    const o = at(p, ROLLUP[type].key);
     if (!day || !isObj(o)) continue;
     const hrv = type === "daily-heart-rate-variability";
     const low = hrv ? tenth(num(o.averageHeartRateVariabilityMillisecondsMin)) : whole(num(o.beatsPerMinuteMin));

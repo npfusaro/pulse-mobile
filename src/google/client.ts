@@ -29,12 +29,17 @@ export const DATA_TYPES = {
 } as const;
 export type DataTypeId = keyof typeof DATA_TYPES;
 
-/** The types whose `:dailyRollUp` Pulse reads, and the key its value sits under in each rolled-up point. */
-export const ROLLUP_KEY = {
-  "daily-heart-rate-variability": "heartRateVariabilityPersonalRange",
-  "daily-resting-heart-rate": "restingHeartRatePersonalRange",
+/**
+ * The personal ranges Pulse reads through `:dailyRollUp`, keyed by the daily type they belong to: the roll-up type
+ * identifier that goes in the request path (the daily type itself answers "DailyRollup is not supported", as
+ * `floors` and `active-minutes` are roll-up-only names of their own), and the key the value sits under in each
+ * rolled-up point.
+ */
+export const ROLLUP = {
+  "daily-heart-rate-variability": { path: "heart-rate-variability-personal-range", key: "heartRateVariabilityPersonalRange" },
+  "daily-resting-heart-rate": { path: "resting-heart-rate-personal-range", key: "restingHeartRatePersonalRange" },
 } as const;
-export type RollupTypeId = keyof typeof ROLLUP_KEY;
+export type RollupTypeId = keyof typeof ROLLUP;
 
 export class GoogleError extends Error {
   constructor(
@@ -201,9 +206,10 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
      * (INVALID_ARGUMENT), and a window of days fits one answer anyway.
      */
     async rollup(type: RollupTypeId, w: TimeWindow, tz: string): Promise<unknown[]> {
-      const where = `${type} dailyRollUp`;
+      const { path } = ROLLUP[type];
+      const where = `${path} dailyRollUp`;
       const range = { start: civilDate(localDay(w.start, tz)), end: civilDate(localDay(ceilMidnight(w.end, tz), tz)) };
-      return readPage(await request(`${API}/${type}/dataPoints:dailyRollUp`, where, JSON.stringify({ range })), "rollupDataPoints", where).points;
+      return readPage(await request(`${API}/${path}/dataPoints:dailyRollUp`, where, JSON.stringify({ range })), "rollupDataPoints", where).points;
     },
   };
 }

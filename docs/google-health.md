@@ -4,7 +4,10 @@ This fork adds a second source beside Health Connect: the Google Health API, for
 Fitbit. First the band's **minute-by-minute blood oxygen (SpO2)**: Fitbit's own app shows a nightly average; Google's
 cloud keeps every minute the band read (you can see them in a Google Takeout), and the API serves them as the
 `oxygen-saturation` sample type. Then, per night, Fitbit's **deep-sleep RMSSD** and its **personal ranges** for HRV
-and resting heart rate (`daily-heart-rate-variability` and the two types' `:dailyRollUp`). All of it sits under one
+and resting heart rate (`daily-heart-rate-variability`, and `:dailyRollUp` on the roll-up-only identifiers
+`heart-rate-variability-personal-range` and `resting-heart-rate-personal-range`; the daily types themselves answer
+"DailyRollup is not supported"). Should Google refuse the range roll-ups for an account, the sync remembers the
+answer, stops asking, and Settings says so; the Health Monitor then keeps Pulse's own ranges. All of it sits under one
 read-only scope. Nothing about the Google account is kept on the phone: no email, no name, no token.
 
 The five-minute HRV samples themselves are *not* read from the API: Fitbit writes those to Health Connect, Pulse

@@ -34,9 +34,14 @@ export type GoogleSyncState = {
   backfillDone: number;
   lastSuccessAt: number | null;
   lastError: string | null;
+  /**
+   * Google's answer when it refused a personal-range roll-up outright (INVALID_ARGUMENT, NOT_FOUND): the ranges are
+   * not to be had for this account or build, so later syncs skip them and Settings says so. Cleared by a fresh walk.
+   */
+  rangesError: string | null;
 };
 
-const EMPTY: GoogleSyncState = { version: 0, syncedThrough: null, backfillDays: null, backfillDone: 0, lastSuccessAt: null, lastError: null };
+const EMPTY: GoogleSyncState = { version: 0, syncedThrough: null, backfillDays: null, backfillDone: 0, lastSuccessAt: null, lastError: null, rangesError: null };
 
 export async function readGoogleSyncState(): Promise<GoogleSyncState> {
   try {
@@ -110,7 +115,7 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
     let from: number;
     if (fresh || grow) {
       from = localMidnight(addDays(today, 1 - total), tz);
-      await writeGoogleSyncState({ version: SYNC_VERSION, syncedThrough: null, backfillDays: total, backfillDone: 0 });
+      await writeGoogleSyncState({ version: SYNC_VERSION, syncedThrough: null, backfillDays: total, backfillDone: 0, rangesError: null });
     } else if (backfilling) {
       from = st.syncedThrough!;
     } else {
@@ -121,16 +126,21 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
     // the cursor on, and the run ends with that failure as its warning (so Settings shows it) but is not aborted.
     // A broken request for one type must not stall the other; a fix re-walks the window by bumping SYNC_VERSION.
     let nightsError: unknown;
+    let ranges = (await readGoogleSyncState()).rangesError === null;
     const windows = localWindows(from, t, WINDOW_DAYS, tz);
     for (const [i, win] of windows.entries()) {
       progress("google", backfilling ? done : i, backfilling ? total : windows.length);
       samples += await spo2Window(client, store, win, tz);
-      const n = await nightsWindow(client, store, win, tz);
+      const n = await nightsWindow(client, store, win, tz, ranges);
       nights += n.nights;
       if (n.error) {
         const e = n.error;
         if (e instanceof GoogleAuthError || !(e instanceof GoogleError) || e.code === "auth_revoked" || e.code === "network") throw e;
-        nightsError ??= e;
+        // A range roll-up Google refuses as such is not this run's failure: it is remembered, and not asked again.
+        if (n.errorJob === "range" && (e.status === 400 || e.status === 404)) {
+          ranges = false;
+          await writeGoogleSyncState({ rangesError: e.message });
+        } else nightsError ??= e;
       }
       if (backfilling) done = Math.min(total, done + daysIn(win, tz));
       await writeGoogleSyncState({ syncedThrough: win.end, ...(backfilling && { backfillDone: done }) });
@@ -161,30 +171,38 @@ async function spo2Window(client: GoogleClient, store: Store, win: { start: numb
  * Nothing is deleted: a night Google no longer answers for keeps its last values. Returns the nights touched and
  * the first failure, for the caller to weigh (a run is not aborted over a nightly request).
  */
-async function nightsWindow(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string): Promise<{ nights: number; error?: unknown }> {
+async function nightsWindow(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string, ranges: boolean): Promise<{ nights: number; error?: unknown; errorJob?: "daily" | "range" }> {
   const days = new Set<string>();
   let error: unknown;
+  let errorJob: "daily" | "range" | undefined;
   const put = async (rows: GoogleDaily[]) => {
     if (rows.length) await store.upsertGoogleDaily(rows);
     for (const r of rows) days.add(r.day);
   };
-  const jobs = [
-    async () => {
-      const daily: unknown[] = [];
-      await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
-      await put(mapDailyHrv(daily));
+  const jobs: { kind: "daily" | "range"; run: () => Promise<void> }[] = [
+    {
+      kind: "daily",
+      run: async () => {
+        const daily: unknown[] = [];
+        await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
+        await put(mapDailyHrv(daily));
+      },
     },
-    ...(["daily-heart-rate-variability", "daily-resting-heart-rate"] as const).map((type) => async () => put(mapPersonalRange(type, await client.rollup(type, win, tz)))),
+    ...(ranges ? (["daily-heart-rate-variability", "daily-resting-heart-rate"] as const).map((type) => ({ kind: "range" as const, run: async () => put(mapPersonalRange(type, await client.rollup(type, win, tz))) })) : []),
   ];
   for (const job of jobs) {
     try {
-      await job();
+      await job.run();
     } catch (e) {
-      error ??= e;
+      if (error === undefined) {
+        error = e;
+        errorJob = job.kind;
+      }
       if (e instanceof GoogleAuthError || !(e instanceof GoogleError) || e.code === "auth_revoked" || e.code === "network") break;
+      if (job.kind === "range") break; // the other range asks the same of Google
     }
   }
-  return { nights: days.size, error };
+  return { nights: days.size, error, errorJob };
 }
 
 /** Local days a window touches. */

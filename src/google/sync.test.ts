@@ -63,6 +63,8 @@ let calls: { type: string; filter?: string; range?: unknown }[];
 let failWith: number | null;
 /** When set, every roll-up answers 400 INVALID_ARGUMENT with this message (the lists keep working). */
 let rollupFail: string | null;
+/** When set, the daily-HRV list answers 400 INVALID_ARGUMENT with this message. */
+let dailyFail: string | null;
 
 const dateOf = (p: ReturnType<typeof dailyHrv>) => {
   const { year, month, day } = p.dailyHeartRateVariability.date;
@@ -74,7 +76,8 @@ const nextDay = (day: string) => new Date(Date.parse(day) + 86_400_000).toISOStr
 /** Answers each request from the scripted data: lists page by 3 to exercise pagination; roll-ups answer one point a day. */
 const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input));
-  const type = /dataTypes\/([a-z-]+)\//.exec(url.pathname)![1];
+  const type = /dataTypes\/([a-z-]+)\//.exec(url.pathname)![1].replace("heart-rate-variability-personal-range", "daily-heart-rate-variability").replace("resting-heart-rate-personal-range", "daily-resting-heart-rate");
+  if (url.pathname.endsWith(":dailyRollUp")) expect(url.pathname).toMatch(/dataTypes\/(heart-rate-variability|resting-heart-rate)-personal-range\/dataPoints:dailyRollUp$/);
   if (failWith) return new Response(JSON.stringify({ error: { code: failWith, status: "UNAVAILABLE" } }), { status: failWith });
   if (url.pathname.endsWith(":dailyRollUp")) {
     expect(init?.method).toBe("POST");
@@ -93,6 +96,7 @@ const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
   const filter = url.searchParams.get("filter")!;
   const pageToken = url.searchParams.get("pageToken");
   calls.push({ type, filter });
+  if (dailyFail && type === "daily-heart-rate-variability") return new Response(JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: dailyFail } }), { status: 400 });
   const [, lo, hi] = /(?:physical_time|date) >= "([^"]+)" AND \S+ < "([^"]+)"/.exec(filter)!;
   const inWin =
     type === "oxygen-saturation"
@@ -132,6 +136,7 @@ beforeEach(() => {
   calls = [];
   failWith = null;
   rollupFail = null;
+  dailyFail = null;
   data = [...night("a", "2026-10-19T03:00:00Z", 7, 96), ...night("b", "2026-10-20T03:30:00Z", 5, 97.5)];
   dailyData = [dailyHrv("2026-10-19", 41.26, 55.5), dailyHrv("2026-10-20", 38, 49.94)];
   ranges = { "daily-heart-rate-variability:2026-10-20": [31.5, 52.25], "daily-resting-heart-rate:2026-10-20": [52.4, 58.6], "daily-resting-heart-rate:2026-10-19": [52, 59] };
@@ -262,19 +267,43 @@ describe("syncGoogle", () => {
     expect(await readGoogleSyncState()).toMatchObject({ version: SYNC_VERSION, backfillDays: 30, backfillDone: 30 });
   });
 
-  it("a roll-up Google rejects leaves the SpO2 and the daily HRV in place, moves the cursor on, and surfaces as the run's failure with Google's reason", async () => {
-    rollupFail = 'Invalid JSON payload received. Unknown name "pageSize": Cannot find field.';
+  it("a range roll-up Google refuses is remembered with its reason and never asked again; the run succeeds with the SpO2 and the daily HRV", async () => {
+    rollupFail = "DailyRollup is not supported for data type heart-rate-variability-personal-range, but the following actions are supported: list, reconcile";
     const r = await run(30);
     expect(r.samples).toBe(12);
     expect(r.nights).toBe(2);
+    expect(r.warnings).toEqual([]);
+    const st = await readGoogleSyncState();
+    expect(st).toMatchObject({ backfillDone: 30, syncedThrough: Math.floor(NOW / 1000), lastError: null });
+    expect(st.rangesError).toBe(`[google] heart-rate-variability-personal-range dailyRollUp: INVALID_ARGUMENT (HTTP 400) — ${rollupFail}`);
+    expect(await all()).toEqual(expected());
+    expect(await metricsOf("2026-10-20")).toMatchObject({ hrvDeepMs: 49.9, hrvRangeLow: null, rhrRangeLow: null });
+    // One refusal, in the first window: the second range and the later windows never ask.
+    expect(calls.filter((c) => c.type.endsWith(":rollup"))).toHaveLength(1);
+    expect(calls[calls.length - 1].type).not.toMatch(/rollup/);
+    calls = [];
+    clock += 3_600_000;
+    await run(30);
+    expect(calls.some((c) => c.type.endsWith(":rollup"))).toBe(false);
+    // A fresh walk (a longer history here) tries the ranges again.
+    rollupFail = null;
+    calls = [];
+    await run(60);
+    expect(calls.some((c) => c.type.endsWith(":rollup"))).toBe(true);
+    expect((await readGoogleSyncState()).rangesError).toBeNull();
+    expect(await metricsOf("2026-10-20")).toMatchObject({ hrvRangeLow: 31.5, rhrRangeLow: 52 });
+  });
+
+  it("a daily-HRV list Google rejects is the run's failure, with Google's reason, but the SpO2 stays and the cursor moves on", async () => {
+    dailyFail = "Invalid filter";
+    const r = await run(30);
+    expect(r.samples).toBe(12);
     expect(r.warnings).toEqual(["google_error:INVALID_ARGUMENT"]);
     const st = await readGoogleSyncState();
     expect(st).toMatchObject({ backfillDone: 30, syncedThrough: Math.floor(NOW / 1000) });
-    expect(st.lastError).toBe('[google] daily-heart-rate-variability dailyRollUp: INVALID_ARGUMENT (HTTP 400) — Invalid JSON payload received. Unknown name "pageSize": Cannot find field.');
+    expect(st.lastError).toBe("[google] daily-heart-rate-variability: INVALID_ARGUMENT (HTTP 400) — Invalid filter");
     expect(await all()).toEqual(expected());
-    expect(await metricsOf("2026-10-20")).toMatchObject({ hrvDeepMs: 49.9, hrvRangeLow: null, rhrRangeLow: null });
-    // The request Google sees is the range alone.
-    expect(calls.find((c) => c.type === "daily-heart-rate-variability:rollup")!.range).toEqual({ start: { date: civil("2026-09-21") }, end: { date: civil("2026-10-05") } });
+    expect(await metricsOf("2026-10-20")).toMatchObject({ hrvDeepMs: null, hrvRangeLow: 31.5 }); // the ranges still came
   });
 
   it("an interrupted import resumes at its cursor", async () => {
