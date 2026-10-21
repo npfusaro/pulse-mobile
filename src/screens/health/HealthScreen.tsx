@@ -247,7 +247,7 @@ function BloodOxygen({ o }: { o: HealthHubVM["bloodOxygen"] }) {
 
 /** Last night's HRV with Fitbit's deep-sleep RMSSD (fork): the five-minute curve Health Connect carries, plus what Google adds. */
 function NightHrv({ o }: { o: HealthHubVM["nightHrv"] }) {
-  if (!o) return <Text className={EMPTY}>Your HRV through the night, every five minutes, with the deep-sleep value and your typical range from Google. It shows here once last night has synced.</Text>;
+  if (!o) return <Text className={EMPTY}>Your HRV through the night, every five minutes, against your typical range, with Fitbit’s deep-sleep value from Google. It shows here once last night has synced.</Text>;
   const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
   return (
     <View className="gap-1">

@@ -1,7 +1,8 @@
 // Night HRV (fork addition, a Pulse-only extra): the band's five-minute RMSSD across a night from Health Connect's
 // samples (hrv_days, the ones the engine scores), with what the Google source adds to the night: Fitbit's deep-sleep
-// RMSSD and its personal range for the nightly average, both on the day's metrics (src/data/googleDaily.ts). Nothing
-// here is scored; Recovery keeps its own baseline, and the chip is only where the night sits in Fitbit's range.
+// RMSSD, and its personal range for the nightly average where Google serves one (it has refused so far), else the
+// Health Monitor's own. Nothing here is scored; Recovery keeps its own baseline, and the chip is only where the
+// night sits in that range.
 import { isGoogleConnected } from "@/google/auth";
 import { addDays } from "@/lib/time";
 import { type DayRow, finite, loadDays, ms, none, ok, type QueryCtx, todayOf, vitalReason } from "./common";
@@ -38,13 +39,20 @@ async function hrvStats(ctx: QueryCtx, main: { id: string; start: number; end: n
 /** The night's average: Fitbit's nightly RMSSD when Health Connect has one, else the samples' own mean. */
 const nightAverage = (row: DayRow | undefined, stats: NightStats | null): number | null => (finite(row?.metrics?.hrvMs) ? row!.metrics!.hrvMs! : (stats?.mean ?? null));
 
-/** Fitbit's personal range for the day, when the Google source has written one. */
+/**
+ * The day's range: Fitbit's, when the Google source wrote one (Google has refused them so far: docs/google-health.md),
+ * else the Health Monitor's HRV range for the day, Pulse's own baseline, so the night still has a standing.
+ */
 const rangeOf = (row: DayRow | undefined): NightHrvVM["range"] => {
   const m = row?.metrics;
-  return finite(m?.hrvRangeLow) && finite(m?.hrvRangeHigh) && m!.hrvRangeLow! < m!.hrvRangeHigh! ? { low: m!.hrvRangeLow!, high: m!.hrvRangeHigh! } : null;
+  if (finite(m?.hrvRangeLow) && finite(m?.hrvRangeHigh) && m!.hrvRangeLow! < m!.hrvRangeHigh!) return { low: m!.hrvRangeLow!, high: m!.hrvRangeHigh!, source: "google" };
+  const hm = row?.healthMonitor;
+  const v = hm && hm.reason === null ? hm.vitals.find((x) => x.key === "hrv") : undefined;
+  if (!v?.range || !(v.range.low < v.range.high)) return null;
+  return { low: Math.round(v.range.low * 10) / 10, high: Math.round(v.range.high * 10) / 10, source: v.rangeSource ?? "pulse" };
 };
 
-/** Where an average sits against Fitbit's range: the Health Monitor's wording. Above the range is good news for HRV. */
+/** Where an average sits against the range: the Health Monitor's wording. Above the range is good news for HRV. */
 export function hrvChip(average: number | null, range: NightHrvVM["range"]): NightHrvVM["chip"] {
   if (!finite(average) || !range) return null;
   if (average < range.low) return { tone: "warning", text: "Below your range" };

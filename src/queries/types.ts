@@ -621,8 +621,11 @@ export type NightHrvVM = {
   average: Metric<number>;
   /** Fitbit's RMSSD during deep sleep, from Google; null without. */
   deep: number | null;
-  /** Fitbit's personal range for the nightly average as of this day, from Google; null without. */
-  range: { low: number; high: number } | null;
+  /**
+   * The range the night is judged by: Fitbit's own, when the Google source has it for the day, else the Health
+   * Monitor's (Pulse's baseline over the last month); null while neither exists.
+   */
+  range: { low: number; high: number; source: "google" | "pulse" } | null;
   /** Where the average sits against the range; null without both. */
   chip: { tone: ChipTone; text: string } | null;
   /** The samples, the night's highest and lowest, and how many the band kept. */

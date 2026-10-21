@@ -119,9 +119,11 @@ next sync imports the history window (Settings › Data source › **History**, 
 14-day windows, a night at a time, and every sync after that re-reads the last three days. The Health tab gets two
 cards. **Blood oxygen** opens the night: the average with its standing against 95–100, the low, minutes under 95%,
 the minute chart with bed and wake markers, and the week's nights. **Night HRV** opens the night's five-minute
-RMSSD curve with deep sleep lit and Fitbit's typical range as a band, the average with where it sits in that range,
-the deep-sleep RMSSD, the high, and the week's nights. The **Health Monitor** judges HRV and resting heart rate
-against Fitbit's ranges from then on (a vital without one keeps Pulse's own).
+RMSSD curve with deep sleep lit and your typical range as a band (the Health Monitor's own, or Fitbit's where Google
+serves one), the average with where it sits in that range, the deep-sleep RMSSD, the high, and the week's nights.
+The **Health Monitor** would judge HRV and resting heart rate against Fitbit's ranges if Google served them; as of
+October 2026 it refuses the personal-range roll-ups on every identifier tried, Settings says so, and Pulse's own
+ranges stay.
 
 **Disconnect** forgets the connection, asks Google to revoke the grant and drops the samples and the nightly rows.
 The grant is also listed at myaccount.google.com › Security › Third-party access.

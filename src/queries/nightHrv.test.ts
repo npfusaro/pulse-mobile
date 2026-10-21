@@ -54,7 +54,7 @@ describe("getNightHrv", () => {
     const row = (await store.allMetrics()).find((m) => m.day === TODAY)!;
     expect(vm.average.value).toBe(row.hrvMs);
     expect(vm.deep).toBe(row.hrvDeepMs);
-    expect(vm.range).toEqual({ low: row.hrvRangeLow, high: row.hrvRangeHigh });
+    expect(vm.range).toEqual({ low: row.hrvRangeLow, high: row.hrvRangeHigh, source: "google" });
     expect(vm.chip).toEqual(hrvChip(row.hrvMs, vm.range));
     // The samples sit inside the night, five minutes apart, in order; the deep stretches come from the hypnogram.
     const inNight = night.points.filter((p) => p.t >= night.bed && p.t < night.wake);
@@ -78,24 +78,29 @@ describe("getNightHrv", () => {
     expect(typeof well.chip?.text).toBe("string");
   });
 
-  it("a band-off night has no average or samples with the night's reason; a night with samples but no Google row has no deep value or range", async () => {
+  it("a band-off night has no average or samples with the night's reason; a night with samples but no Google row has no deep value and the Health Monitor's range", async () => {
     const off = await getNightHrv(dayAt(SCENARIO.bandOff.day + 1), ctx);
     expect(off.average).toMatchObject({ value: null, reason: "band_not_worn" });
     expect(off.night).toMatchObject({ value: null, reason: "band_not_worn" });
     expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, deep: null, inRange: null });
-    // Strip the Google extras from today's row: the curve and the average stay, the chip and the deep value go.
+    // Strip the Google extras from today's row: the curve and the average stay, the deep value goes, and the range
+    // falls back to the Health Monitor's own for the day (Pulse's baseline), so the night keeps a standing.
     const bare = new MemoryStore();
     await seedDemo(bare, { today: TODAY, timeZone: TZ, now: NOW });
     await runPipeline(bare, PROFILE, { today: TODAY });
     const m = (await bare.allMetrics()).find((r) => r.day === TODAY)!;
     await bare.upsertMetrics([{ ...m, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null }]);
+    await runPipeline(bare, PROFILE, { today: TODAY }); // the Health Monitor's range for the day is now Pulse's own
     const plain = await getNightHrv(TODAY, { ...ctx, store: bare });
     expect(plain.average.value).toBe(m.hrvMs);
     expect(plain.night.value!.readings).toBeGreaterThan(40);
     expect(plain.deep).toBeNull();
-    expect(plain.range).toBeNull();
-    expect(plain.chip).toBeNull();
-    expect(plain.nights.at(-1)!.inRange).toBeNull();
+    const hm = (await bare.getScores(TODAY))!.health_monitor as { reason: null; vitals: { key: string; range: { low: number; high: number } | null; rangeSource?: string }[] };
+    const hrv = hm.vitals.find((v) => v.key === "hrv")!;
+    expect(hrv.rangeSource).toBe("pulse");
+    expect(plain.range).toEqual({ low: Math.round(hrv.range!.low * 10) / 10, high: Math.round(hrv.range!.high * 10) / 10, source: "pulse" });
+    expect(plain.chip).not.toBeNull();
+    expect(typeof plain.nights.at(-1)!.inRange).toBe("boolean");
   });
 
   it("a Google nightly row fills a day's deep-sleep RMSSD and range over what Health Connect wrote", async () => {
@@ -108,7 +113,7 @@ describe("getNightHrv", () => {
     const vm = await getNightHrv(TODAY, { ...ctx, store: bare });
     expect(vm.average.value).toBe(m.hrvMs); // Health Connect's nightly value stands
     expect(vm.deep).toBe(61.5);
-    expect(vm.range).toEqual({ low: 30, high: 50 });
+    expect(vm.range).toEqual({ low: 30, high: 50, source: "google" });
   });
 
   it("says when Google is not connected, so the screen explains what is missing", async () => {

@@ -140,13 +140,13 @@ export function NightHrvScreen() {
         <SectionShell
           variant="card"
           title={nightTitle}
-          info={{ title: "HRV through the night", body: "One RMSSD reading every five minutes from bedtime to waking; deep sleep is lit, since that is where HRV runs highest and steadiest. A break is a stretch the band could not read. The shaded band is the range Fitbit calls typical for you." }}
+          info={{ title: "HRV through the night", body: "One RMSSD reading every five minutes from bedtime to waking; deep sleep is lit, since that is where HRV runs highest and steadiest. A break is a stretch the band could not read. The shaded band is your typical range: the Health Monitor’s, from your last month of nights, or Fitbit’s own when Google provides it." }}
         >
           <NightHrvChart data={series} />
           {!vm.connected && (
             <View className="mt-3">
               <EmptyState
-                body="The deep-sleep HRV and your typical range live in Google’s cloud, not in Health Connect. Connect Google in Settings to see them here."
+                body="The deep-sleep HRV lives in Google’s cloud, not in Health Connect. Connect Google in Settings to see it here."
                 action={{ label: "Open Settings", href: GOOGLE_SETTINGS }}
               />
             </View>
@@ -154,7 +154,7 @@ export function NightHrvScreen() {
         </SectionShell>
       }
       secondary={[
-        <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average RMSSD, Fitbit’s deep-sleep RMSSD, and whether the average sat inside your typical range. Tap a night to see it." }}>
+        <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average RMSSD, Fitbit’s deep-sleep RMSSD (from Google), and whether the average sat inside your typical range as of that night. Tap a night to see it." }}>
           <Week vm={vm} today={today} />
         </SectionShell>,
       ]}
