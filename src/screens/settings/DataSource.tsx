@@ -266,7 +266,9 @@ function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: 
   };
   if (state === null) return null;
   const needsConsent = warnings.includes("google_needs_consent");
-  const failed = warnings.find((w) => w.startsWith("google_error:"))?.slice("google_error:".length);
+  // The last run's warning, or (after a restart, before the next run) the error the sync state kept: a failed run
+  // must read as failed, not as an import sitting at its last count.
+  const failed = warnings.find((w) => w.startsWith("google_error:"))?.slice("google_error:".length) ?? (sync?.lastError ? "error" : undefined);
   const importing = sync && sync.backfillDays !== null && sync.backfillDone < sync.backfillDays;
   const last = sync?.lastSuccessAt ? sync.lastSuccessAt * 1000 : null;
   const line =
@@ -276,10 +278,10 @@ function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: 
         ? "Not connected"
         : needsConsent
           ? "Access needed"
-          : importing
-            ? `Importing: ${sync!.backfillDone} of ${sync!.backfillDays} days`
-            : failed
-              ? `Failed (${failed})`
+          : failed
+            ? `Failed (${failed})${importing ? `, ${sync!.backfillDone} of ${sync!.backfillDays} days imported` : ""}`
+            : importing
+              ? `Importing: ${sync!.backfillDone} of ${sync!.backfillDays} days`
               : last
                 ? `Synced ${ago(last, Math.max(now, last))}`
                 : "Not synced yet";
@@ -287,6 +289,8 @@ function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: 
     <View className="mt-4 gap-2 border-t border-border pt-4">
       <Text className={ROW_LABEL}>Google Health</Text>
       <Text className={cn("text-[15px] leading-[22px]", (needsConsent || failed) && "text-warning-text")}>{line}</Text>
+      {/* The request that failed and Google's status, as the sync recorded them: which call, and whether it is scope, format or Google. */}
+      {failed && sync?.lastError && <Text className={HINT}>{sync.lastError}</Text>}
       <Text className={HINT}>
         {state === "connected"
           ? "Reads what Fitbit keeps in Google's cloud and never writes to Health Connect: your band's minute-by-minute blood oxygen, each night's deep-sleep HRV, and Fitbit's own typical ranges for HRV and resting heart rate (the Health Monitor uses them). Nothing about your account is kept."
