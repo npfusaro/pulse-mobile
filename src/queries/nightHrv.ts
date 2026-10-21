@@ -53,7 +53,7 @@ const rangeOf = (row: DayRow | undefined): NightHrvVM["range"] => {
 };
 
 /** Where an average sits against the range: the Health Monitor's wording. Above the range is good news for HRV. */
-export function hrvChip(average: number | null, range: NightHrvVM["range"]): NightHrvVM["chip"] {
+export function hrvChip(average: number | null, range: { low: number; high: number } | null): NightHrvVM["chip"] {
   if (!finite(average) || !range) return null;
   if (average < range.low) return { tone: "warning", text: "Below your range" };
   if (average > range.high) return { tone: "optimal", text: "Above your range" };
