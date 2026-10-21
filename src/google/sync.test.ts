@@ -58,6 +58,7 @@ const rangePoint = (type: string, day: string, min: number, max: number) => ({
 
 let data: ReturnType<typeof point>[];
 let dailyData: ReturnType<typeof dailyHrv>[];
+let dailySpo2: { day: string; avg: number }[];
 let ranges: Record<string, [number, number]>;
 let calls: { type: string; filter?: string; range?: unknown }[];
 let failWith: number | null;
@@ -98,10 +99,12 @@ const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
   calls.push({ type, filter });
   if (dailyFail && type === "daily-heart-rate-variability") return new Response(JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: dailyFail } }), { status: 400 });
   const [, lo, hi] = /(?:physical_time|date) >= "([^"]+)" AND \S+ < "([^"]+)"/.exec(filter)!;
-  const inWin =
+  const inWin: unknown[] =
     type === "oxygen-saturation"
       ? data.filter((p) => p.oxygenSaturation.sampleTime.physicalTime >= lo && p.oxygenSaturation.sampleTime.physicalTime < hi)
-      : dailyData.filter((p) => dateOf(p) >= lo && dateOf(p) < hi);
+      : type === "daily-oxygen-saturation"
+        ? dailySpo2.filter((p) => p.day >= lo && p.day < hi).map((p) => ({ dailyOxygenSaturation: { date: civil(p.day), averagePercentage: p.avg, lowerBoundPercentage: p.avg - 3, upperBoundPercentage: p.avg + 1.5 } }))
+        : dailyData.filter((p) => dateOf(p) >= lo && dateOf(p) < hi);
   const from = pageToken ? Number(pageToken) : 0;
   const page = inWin.slice(from, from + 3);
   const next = from + 3 < inWin.length ? String(from + 3) : undefined;
@@ -139,6 +142,7 @@ beforeEach(() => {
   dailyFail = null;
   data = [...night("a", "2026-10-19T03:00:00Z", 7, 96), ...night("b", "2026-10-20T03:30:00Z", 5, 97.5)];
   dailyData = [dailyHrv("2026-10-19", 41.26, 55.5), dailyHrv("2026-10-20", 38, 49.94)];
+  dailySpo2 = [{ day: "2026-10-19", avg: 96.44 }, { day: "2026-10-20", avg: 97.1 }];
   ranges = { "daily-heart-rate-variability:2026-10-20": [31.5, 52.25], "daily-resting-heart-rate:2026-10-20": [52.4, 58.6], "daily-resting-heart-rate:2026-10-19": [52, 59] };
 });
 
@@ -181,17 +185,17 @@ describe("mapOxygenSaturation", () => {
 describe("nightly mappers", () => {
   it("mapDailyHrv keeps the average and deep-sleep RMSSD to one decimal on Google's day; a point with neither goes", () => {
     expect(mapDailyHrv([dailyHrv("2026-10-20", 38, 49.94), dailyHrv("2026-10-19", 41.26, null), dailyHrv("2026-10-18", null, null), { dailyHeartRateVariability: { date: { year: 2026, month: 10 } } }])).toEqual([
-      { day: "2026-10-19", hrvMs: 41.3, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null },
-      { day: "2026-10-20", hrvMs: 38, hrvDeepMs: 49.9, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null },
+      { day: "2026-10-19", spo2Pct: null, hrvMs: 41.3, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null },
+      { day: "2026-10-20", spo2Pct: null, hrvMs: 38, hrvDeepMs: 49.9, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null },
     ]);
   });
 
   it("mapPersonalRange reads each type's range value, needs both ends and low < high, rounds HRV to a tenth and resting HR to a beat", () => {
     expect(mapPersonalRange("daily-heart-rate-variability", [rangePoint("daily-heart-rate-variability", "2026-10-20", 31.55, 52.21), rangePoint("daily-heart-rate-variability", "2026-10-19", 40, 40)])).toEqual([
-      { day: "2026-10-20", hrvMs: null, hrvDeepMs: null, hrvRangeLow: 31.6, hrvRangeHigh: 52.2, rhrRangeLow: null, rhrRangeHigh: null },
+      { day: "2026-10-20", spo2Pct: null, hrvMs: null, hrvDeepMs: null, hrvRangeLow: 31.6, hrvRangeHigh: 52.2, rhrRangeLow: null, rhrRangeHigh: null },
     ]);
     expect(mapPersonalRange("daily-resting-heart-rate", [rangePoint("daily-resting-heart-rate", "2026-10-20", 52.4, 58.6), { civilStartTime: { date: civil("2026-10-19") }, restingHeartRatePersonalRange: { beatsPerMinuteMin: 50 } }])).toEqual([
-      { day: "2026-10-20", hrvMs: null, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: 52, rhrRangeHigh: 59 },
+      { day: "2026-10-20", spo2Pct: null, hrvMs: null, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: 52, rhrRangeHigh: 59 },
     ]);
   });
 });
@@ -213,8 +217,8 @@ describe("syncGoogle", () => {
   it("writes each night's HRV and the ranges into the day's metrics; a roll-up covers the window's local days", async () => {
     const r = await run(30);
     expect(r.nights).toBe(2);
-    expect(await metricsOf("2026-10-19")).toMatchObject({ hrvMs: 41.3, hrvDeepMs: 55.5, hrvRangeLow: null, rhrRangeLow: 52, rhrRangeHigh: 59 });
-    expect(await metricsOf("2026-10-20")).toMatchObject({ hrvMs: 38, hrvDeepMs: 49.9, hrvRangeLow: 31.5, hrvRangeHigh: 52.3, rhrRangeLow: 52, rhrRangeHigh: 59 });
+    expect(await metricsOf("2026-10-19")).toMatchObject({ spo2Pct: 96.4, hrvMs: 41.3, hrvDeepMs: 55.5, hrvRangeLow: null, rhrRangeLow: 52, rhrRangeHigh: 59 });
+    expect(await metricsOf("2026-10-20")).toMatchObject({ spo2Pct: 97.1, hrvMs: 38, hrvDeepMs: 49.9, hrvRangeLow: 31.5, hrvRangeHigh: 52.3, rhrRangeLow: 52, rhrRangeHigh: 59 });
     // The daily list and both roll-ups ask for the same windows as the samples, on civil days.
     const rollups = calls.filter((c) => c.type === "daily-heart-rate-variability:rollup");
     expect(rollups).toHaveLength(3);

@@ -26,6 +26,8 @@ export const DATA_TYPES = {
   "daily-heart-rate-variability": { member: "date", maxDays: 90, pageSize: 10_000 },
   // Listed for nothing yet; its dailyRollUp is the resting-HR personal range (restingHeartRatePersonalRange).
   "daily-resting-heart-rate": { member: "date", maxDays: 90, pageSize: 10_000 },
+  // One point a night: Fitbit's nightly SpO2 average with its bounds, the "Daily SpO2" of a Takeout, on the wake day.
+  "daily-oxygen-saturation": { member: "date", maxDays: 90, pageSize: 10_000 },
 } as const;
 export type DataTypeId = keyof typeof DATA_TYPES;
 

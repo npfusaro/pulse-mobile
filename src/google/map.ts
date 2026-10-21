@@ -54,7 +54,23 @@ function civil(v: unknown): string | null {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-const EMPTY_DAILY: Omit<GoogleDaily, "day"> = { hrvMs: null, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null };
+const EMPTY_DAILY: Omit<GoogleDaily, "day"> = { spo2Pct: null, hrvMs: null, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null };
+
+/**
+ * `daily-oxygen-saturation` points → one row a day: Fitbit's nightly SpO2 average to one decimal, on Google's civil
+ * date (the wake day). A point without an average is skipped; a repeated day keeps the last.
+ */
+export function mapDailySpo2(points: unknown[]): GoogleDaily[] {
+  const byDay = new Map<string, GoogleDaily>();
+  for (const p of points) {
+    const o = at(p, "dailyOxygenSaturation");
+    const day = civil(at(o, "date"));
+    const pct = num(at(o, "averagePercentage"));
+    if (!day || pct === null || pct <= 0 || pct > 100) continue;
+    byDay.set(day, { ...EMPTY_DAILY, day, spo2Pct: Math.round(pct * 10) / 10 });
+  }
+  return [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+}
 
 /**
  * `daily-heart-rate-variability` points → one row a day: Fitbit's nightly average RMSSD and its deep-sleep RMSSD, to

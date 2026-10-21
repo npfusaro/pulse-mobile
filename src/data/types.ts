@@ -126,12 +126,14 @@ export type StepsMinute = { ts: number; v: number };
 export type Spo2Sample = { ts: number; pct: number };
 
 /**
- * What the Google Health API adds to a night that Health Connect never carries (src/google): Fitbit's nightly
- * average and deep-sleep RMSSD, and its personal ranges for HRV and resting HR as of that day. Kept in its own table
+ * What the Google Health API adds to a night that Health Connect never carries (src/google): Fitbit's nightly SpO2
+ * average, its nightly average and deep-sleep RMSSD, and its personal ranges for HRV and resting HR as of that day. Kept in its own table
  * (the Health Connect importer rewrites daily_metrics) and merged into `Metrics` by the store's `allMetrics`.
  */
 export type GoogleDaily = {
   day: string;
+  /** Fitbit's nightly SpO2 average (`daily-oxygen-saturation`), on its wake day; Health Connect never has one. */
+  spo2Pct: number | null;
   hrvMs: number | null;
   hrvDeepMs: number | null;
   hrvRangeLow: number | null;

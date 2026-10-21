@@ -1,12 +1,14 @@
 // Google's nightly extras (google_daily) folded into a day's Metrics, for both stores' allMetrics. Google's
-// deep-sleep RMSSD and personal ranges win (Health Connect never has them); Google's nightly average only fills a
-// day Health Connect left empty, so the scored value stays Health Connect's.
+// deep-sleep RMSSD and personal ranges win (Health Connect never has them); Google's nightly HRV and SpO2 averages
+// only fill a day Health Connect left empty (SpO2 always is: Fitbit writes none there), so a scored value stays
+// Health Connect's.
 import { emptyMetrics, type GoogleDaily, type Metrics } from "./types";
 
 export const withGoogleDaily = (m: Metrics, g: GoogleDaily | undefined): Metrics =>
   g
     ? {
         ...m,
+        spo2Pct: m.spo2Pct ?? g.spo2Pct,
         hrvMs: m.hrvMs ?? g.hrvMs,
         hrvDeepMs: g.hrvDeepMs ?? m.hrvDeepMs,
         hrvRangeLow: g.hrvRangeLow ?? m.hrvRangeLow,
@@ -33,6 +35,6 @@ export function mergeGoogleDaily(metrics: Metrics[], google: GoogleDaily[]): Met
 export function mergeGoogleRows(into: Map<string, GoogleDaily>, rows: GoogleDaily[]): void {
   for (const r of rows) {
     const prev = into.get(r.day);
-    into.set(r.day, prev ? { day: r.day, hrvMs: r.hrvMs ?? prev.hrvMs, hrvDeepMs: r.hrvDeepMs ?? prev.hrvDeepMs, hrvRangeLow: r.hrvRangeLow ?? prev.hrvRangeLow, hrvRangeHigh: r.hrvRangeHigh ?? prev.hrvRangeHigh, rhrRangeLow: r.rhrRangeLow ?? prev.rhrRangeLow, rhrRangeHigh: r.rhrRangeHigh ?? prev.rhrRangeHigh } : { ...r });
+    into.set(r.day, prev ? { day: r.day, spo2Pct: r.spo2Pct ?? prev.spo2Pct, hrvMs: r.hrvMs ?? prev.hrvMs, hrvDeepMs: r.hrvDeepMs ?? prev.hrvDeepMs, hrvRangeLow: r.hrvRangeLow ?? prev.hrvRangeLow, hrvRangeHigh: r.hrvRangeHigh ?? prev.hrvRangeHigh, rhrRangeLow: r.rhrRangeLow ?? prev.rhrRangeLow, rhrRangeHigh: r.rhrRangeHigh ?? prev.rhrRangeHigh } : { ...r });
   }
 }

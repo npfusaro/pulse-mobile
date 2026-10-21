@@ -40,7 +40,8 @@ create table if not exists steps_days (bucket integer primary key, offsets text 
 create table if not exists hrv_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists spo2_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists google_daily (
-  day text primary key, hrv_ms real, hrv_deep_ms real, hrv_range_low real, hrv_range_high real, rhr_range_low real, rhr_range_high real
+  day text primary key, hrv_ms real, hrv_deep_ms real, hrv_range_low real, hrv_range_high real, rhr_range_low real, rhr_range_high real,
+  spo2_pct real
 );
 create table if not exists daily_values (day text not null, key text not null, value real not null, primary key (day, key));
 create table if not exists journal_entries (day text not null, tag text not null, value real not null, primary key (day, tag));
@@ -70,6 +71,8 @@ create index if not exists coach_chats_recent on coach_chats (updated_at desc, i
 
 /** Columns added after a release: each `alter` fails harmlessly on a database that already has it. */
 const MIGRATIONS = [
+  // Fitbit's nightly SpO2 average beside the other Google nightly values (fork).
+  "alter table google_daily add column spo2_pct real",
   "alter table logged_entries add column source text not null default 'pulse'",
   "create index if not exists logged_entries_source_day on logged_entries (source, day)",
   // Auto-detected workouts (stage 1, mobile).
@@ -103,7 +106,7 @@ type MetricsRow = {
   rhr_range_high: number | null; hrv_range_low: number | null; hrv_range_high: number | null;
 };
 type GoogleDailyRow = {
-  day: string; hrv_ms: number | null; hrv_deep_ms: number | null; hrv_range_low: number | null; hrv_range_high: number | null;
+  day: string; spo2_pct: number | null; hrv_ms: number | null; hrv_deep_ms: number | null; hrv_range_low: number | null; hrv_range_high: number | null;
   rhr_range_low: number | null; rhr_range_high: number | null;
 };
 type SessionRow = {
@@ -146,6 +149,7 @@ const metricsOf = (r: MetricsRow): Metrics => ({
 });
 const googleDailyOf = (r: GoogleDailyRow): GoogleDaily => ({
   day: r.day,
+  spo2Pct: r.spo2_pct,
   hrvMs: r.hrv_ms,
   hrvDeepMs: r.hrv_deep_ms,
   hrvRangeLow: r.hrv_range_low,
@@ -154,9 +158,10 @@ const googleDailyOf = (r: GoogleDailyRow): GoogleDaily => ({
   rhrRangeHigh: r.rhr_range_high,
 });
 /** Upsert that keeps a stored value where the new row has null: the nightly values and the ranges come separately. */
-const GOOGLE_DAILY_SQL = `insert into google_daily (day, hrv_ms, hrv_deep_ms, hrv_range_low, hrv_range_high, rhr_range_low, rhr_range_high)
-  values (?, ?, ?, ?, ?, ?, ?)
+const GOOGLE_DAILY_SQL = `insert into google_daily (day, hrv_ms, hrv_deep_ms, hrv_range_low, hrv_range_high, rhr_range_low, rhr_range_high, spo2_pct)
+  values (?, ?, ?, ?, ?, ?, ?, ?)
   on conflict (day) do update set
+    spo2_pct = coalesce(excluded.spo2_pct, spo2_pct),
     hrv_ms = coalesce(excluded.hrv_ms, hrv_ms), hrv_deep_ms = coalesce(excluded.hrv_deep_ms, hrv_deep_ms),
     hrv_range_low = coalesce(excluded.hrv_range_low, hrv_range_low), hrv_range_high = coalesce(excluded.hrv_range_high, hrv_range_high),
     rhr_range_low = coalesce(excluded.rhr_range_low, rhr_range_low), rhr_range_high = coalesce(excluded.rhr_range_high, rhr_range_high)`;
@@ -369,7 +374,7 @@ class SqliteStore implements Store {
   }
   async upsertGoogleDaily(rows: GoogleDaily[]) {
     if (!rows.length) return;
-    await this.tx((db) => this.many(db, GOOGLE_DAILY_SQL, rows.map((g) => [g.day, g.hrvMs, g.hrvDeepMs, g.hrvRangeLow, g.hrvRangeHigh, g.rhrRangeLow, g.rhrRangeHigh])));
+    await this.tx((db) => this.many(db, GOOGLE_DAILY_SQL, rows.map((g) => [g.day, g.hrvMs, g.hrvDeepMs, g.hrvRangeLow, g.hrvRangeHigh, g.rhrRangeLow, g.rhrRangeHigh, g.spo2Pct])));
   }
   async clearGoogleDaily() {
     await this.tx((db) => db.runAsync("delete from google_daily"));

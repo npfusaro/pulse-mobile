@@ -1,6 +1,6 @@
 // The Google Health API source, after the server app's src/server/sources/google/sync.ts: the band's
-// minute-by-minute blood oxygen into spo2_days, and per night Fitbit's average and deep-sleep RMSSD and its personal
-// ranges for HRV and resting HR into google_daily. A first import walks the history window oldest first in 14-day
+// minute-by-minute blood oxygen into spo2_days, and per night Fitbit's nightly SpO2 average, its average and
+// deep-sleep RMSSD and its personal ranges for HRV and resting HR into google_daily. A first import walks the history window oldest first in 14-day
 // windows, each committed with its cursor so an interrupted import resumes; later syncs re-read from a few days
 // before the cursor. Within a window the stored SpO2 samples become exactly what Google returned (a reading deleted
 // upstream goes), as the server does for heart rate; the nightly rows merge by day. The ranges reach the Health
@@ -11,11 +11,11 @@ import type { GoogleDaily, Spo2Sample } from "@/data/types";
 import { addDays, localDay, localMidnight } from "@/lib/time";
 import { accessToken, GoogleAuthError } from "./auth";
 import { createGoogleClient, DATA_TYPES, type GoogleClient, GoogleError, localWindows } from "./client";
-import { mapDailyHrv, mapOxygenSaturation, mapPersonalRange } from "./map";
+import { mapDailyHrv, mapDailySpo2, mapOxygenSaturation, mapPersonalRange } from "./map";
 
 export const GOOGLE_SYNC_KEY = "pulse.google.spo2";
 /** Bumped when a sync starts reading a new type: an older cursor re-walks the history window so the type is backfilled. */
-export const SYNC_VERSION = 2;
+export const SYNC_VERSION = 3;
 /** Every window is this wide: the shortest limit among the types read (oxygen-saturation's). */
 export const WINDOW_DAYS = DATA_TYPES["oxygen-saturation"].maxDays;
 
@@ -186,6 +186,14 @@ async function nightsWindow(client: GoogleClient, store: Store, win: { start: nu
         const daily: unknown[] = [];
         await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
         await put(mapDailyHrv(daily));
+      },
+    },
+    {
+      kind: "daily",
+      run: async () => {
+        const daily: unknown[] = [];
+        await client.listEach("daily-oxygen-saturation", win, tz, (points) => daily.push(...points));
+        await put(mapDailySpo2(daily));
       },
     },
     ...(ranges ? (["daily-heart-rate-variability", "daily-resting-heart-rate"] as const).map((type) => ({ kind: "range" as const, run: async () => put(mapPersonalRange(type, await client.rollup(type, win, tz))) })) : []),
