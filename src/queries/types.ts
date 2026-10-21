@@ -361,6 +361,8 @@ export type HealthHubVM = {
   heartRate: { t: number; bpm: number } | null;
   /** Last night's blood oxygen from the Google source (fork): the average and the lowest minute; null without a night read. */
   bloodOxygen: { average: number; low: number; wake: number } | null;
+  /** Last night's HRV (fork): the nightly average RMSSD and Fitbit's deep-sleep RMSSD (Google), null without samples. */
+  nightHrv: { average: number; deep: number | null; wake: number } | null;
 };
 /** Alias: the task's name for the Health hub view model. */
 export type HealthVM = HealthHubVM;
@@ -601,3 +603,30 @@ export type YourDataVM = {
 export type CalendarDayVM = { day: string; recovery: number | null; strain: number | null; sleep: number | null };
 /** Every day of `month` ("YYYY-MM"), first to last. */
 export type CalendarMonthVM = { month: string; days: CalendarDayVM[] };
+
+/**
+ * The band's HRV across one main sleep (fork): RMSSD every five minutes (`t` epoch ms), a little past both ends,
+ * with the deep-sleep stretches to light. Unlike the SpO2 series the points are the samples themselves, not a
+ * minute grid; the chart breaks the line at a gap longer than a sample interval or two.
+ */
+export type NightHrv = { bed: number; wake: number; points: { t: number; v: number }[]; deep: { start: number; end: number }[] };
+
+/** Night HRV `/health/night-hrv?d=` (fork): the night ending on `day`. */
+export type NightHrvVM = {
+  day: string;
+  isToday: boolean;
+  /** Whether Google is connected: the deep-sleep RMSSD and the range come from it; the curve is Health Connect's. */
+  connected: boolean;
+  /** The night's average RMSSD: Fitbit's nightly value when Health Connect has one, else the samples' own mean. */
+  average: Metric<number>;
+  /** Fitbit's RMSSD during deep sleep, from Google; null without. */
+  deep: number | null;
+  /** Fitbit's personal range for the nightly average as of this day, from Google; null without. */
+  range: { low: number; high: number } | null;
+  /** Where the average sits against the range; null without both. */
+  chip: { tone: ChipTone; text: string } | null;
+  /** The samples, the night's highest and lowest, and how many the band kept. */
+  night: Metric<NightHrv & { high: { t: number; v: number }; low: { t: number; v: number }; readings: number }>;
+  /** The seven nights ending on `day`, oldest first; `inRange` null without a range or an average. */
+  nights: { day: string; average: number | null; deep: number | null; inRange: boolean | null }[];
+};

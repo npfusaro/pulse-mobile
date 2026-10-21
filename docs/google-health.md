@@ -1,17 +1,24 @@
-# Blood oxygen from the Google Health API
+# Blood oxygen and night HRV from the Google Health API
 
-This fork adds a second source beside Health Connect: the Google Health API, for the one thing Health Connect never
-gets from Fitbit, the band's **minute-by-minute blood oxygen (SpO2)**. Fitbit's own app shows a nightly average;
-Google's cloud keeps every minute the band read (you can see them in a Google Takeout), and the API serves them as
-the `oxygen-saturation` sample type. Pulse reads only that type under one read-only scope. Nothing about the Google
-account is kept on the phone: no email, no name, no token.
+This fork adds a second source beside Health Connect: the Google Health API, for what Health Connect never gets from
+Fitbit. First the band's **minute-by-minute blood oxygen (SpO2)**: Fitbit's own app shows a nightly average; Google's
+cloud keeps every minute the band read (you can see them in a Google Takeout), and the API serves them as the
+`oxygen-saturation` sample type. Then, per night, Fitbit's **deep-sleep RMSSD** and its **personal ranges** for HRV
+and resting heart rate (`daily-heart-rate-variability` and the two types' `:dailyRollUp`). All of it sits under one
+read-only scope. Nothing about the Google account is kept on the phone: no email, no name, no token.
+
+The five-minute HRV samples themselves are *not* read from the API: Fitbit writes those to Health Connect, Pulse
+already stores them (`hrv_days`) and the engine scores with them. The Night HRV screen draws that series and adds
+what Google has: the deep-sleep value and the range.
 
 ```mermaid
 flowchart LR
-  B[Fitbit Air] --> G[Google Health app]
-  G --> HC[Health Connect] --> P[Pulse: everything else]
-  G --> C[Google cloud] -- Google Health API, oxygen-saturation --> P2[Pulse: spo2_days]
+  B[Fitbit band / Pixel Watch] --> G[Google Health app]
+  G --> HC[Health Connect] --> P[Pulse: everything else, incl. 5-minute HRV]
+  G --> C[Google cloud] -- oxygen-saturation --> P2[Pulse: spo2_days]
+  C -- daily HRV, personal ranges --> P3[Pulse: google_daily]
   P2 --> S[/health/blood-oxygen]
+  P3 --> S2[/health/night-hrv and the Health Monitor]
 ```
 
 ## What it takes
@@ -23,10 +30,14 @@ app carries no client id, and the build you install must be one whose signing ke
 the APK yourself (below), and register that build's key with Google once.
 
 The native part is the local Expo module `modules/pulse-google-auth` (Kotlin, `play-services-auth`). The TypeScript
-side is `src/google`: `auth.ts` (the connection flag and tokens), `client.ts` (requests, pacing, retries),
-`map.ts` (points to samples), `sync.ts` (the history window, the cursor, resume). The samples live in `spo2_days`
-(`src/data`), shaped like `hr_days`. The screen is `src/screens/health/BloodOxygenScreen.tsx` with
-`src/ui/charts/NightSpo2Chart.tsx`; the view model is `src/queries/bloodOxygen.ts`.
+side is `src/google`: `auth.ts` (the connection flag and tokens), `client.ts` (requests, pacing, retries, the list
+and `:dailyRollUp` calls), `map.ts` (points to rows), `sync.ts` (the history window, the cursor, resume; every type
+walks the same 14-day windows, and a bump of `SYNC_VERSION` re-walks the window so a newly read type is backfilled).
+The SpO2 samples live in `spo2_days` (`src/data`), shaped like `hr_days`; the nightly rows in `google_daily`, which
+the store folds into each day's `Metrics` in `allMetrics` (`src/data/googleDaily.ts`), so the Health Monitor picks
+up the ranges without the Health Connect importer ever overwriting them. The screens are
+`src/screens/health/BloodOxygenScreen.tsx` (`src/ui/charts/NightSpo2Chart.tsx`, `src/queries/bloodOxygen.ts`) and
+`src/screens/health/NightHrvScreen.tsx` (`src/ui/charts/NightHrvChart.tsx`, `src/queries/nightHrv.ts`).
 
 ## 1. Build the app
 
@@ -86,14 +97,17 @@ Changes in the console take a few minutes to apply.
 
 ## 3. Connect in Pulse
 
-Settings › Data source › **Google Health** → **Connect Google**. Google's sheet asks for the blood-oxygen scope; the
+Settings › Data source › **Google Health** → **Connect Google**. Google's sheet asks for the health-metrics scope; the
 next sync imports the history window (Settings › Data source › **History**, 180 days unless you change it) in
-14-day windows, a night at a time, and every sync after that re-reads the last three days. The Health tab gets a
-Blood oxygen card, which opens the night: the average with its standing against 95–100, the low, minutes under 95%,
-the minute chart with bed and wake markers, and the week's nights.
+14-day windows, a night at a time, and every sync after that re-reads the last three days. The Health tab gets two
+cards. **Blood oxygen** opens the night: the average with its standing against 95–100, the low, minutes under 95%,
+the minute chart with bed and wake markers, and the week's nights. **Night HRV** opens the night's five-minute
+RMSSD curve with deep sleep lit and Fitbit's typical range as a band, the average with where it sits in that range,
+the deep-sleep RMSSD, the high, and the week's nights. The **Health Monitor** judges HRV and resting heart rate
+against Fitbit's ranges from then on (a vital without one keeps Pulse's own).
 
-**Disconnect** forgets the connection, asks Google to revoke the grant and drops the samples. The grant is also
-listed at myaccount.google.com › Security › Third-party access.
+**Disconnect** forgets the connection, asks Google to revoke the grant and drops the samples and the nightly rows.
+The grant is also listed at myaccount.google.com › Security › Third-party access.
 
 ## History
 

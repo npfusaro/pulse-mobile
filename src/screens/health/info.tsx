@@ -90,3 +90,14 @@ export const BLOOD_OXYGEN_INFO: InfoContent = {
     </>
   ),
 };
+
+export const NIGHT_HRV_INFO: InfoContent = {
+  title: "About night HRV",
+  body: (
+    <>
+      <P>Heart rate variability is the small change in time between one heartbeat and the next, measured here as RMSSD in milliseconds. Your band reads it every five minutes while you sleep; Fitbit’s app shows only the night’s average. Pulse draws every reading, with deep sleep lit: that is where HRV runs highest and steadiest, and Fitbit’s deep-sleep RMSSD is the number it reports from those stretches.</P>
+      <P>The shaded band on the chart, and the standing under the average, is the range Fitbit calls typical for you, read from the Google Health API (Settings › Data source › Google Health). The Health Monitor uses the same range once Google is connected. A night under it usually follows a hard day, a late drink or the start of an illness; a night over it is good news.</P>
+      <P>Recovery keeps its own baseline, built from the same readings; nothing on this screen changes a score. HRV varies a lot from night to night and from person to person, so the trend over weeks matters more than one night.</P>
+    </>
+  ),
+};

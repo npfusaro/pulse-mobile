@@ -110,6 +110,7 @@ function Screens({ onboarded }: { onboarded: boolean }) {
           <Stack.Screen name="chart" />
           <Stack.Screen name="connect" options={{ gestureEnabled: false }} />
           <Stack.Screen name="health/blood-oxygen" />
+          <Stack.Screen name="health/night-hrv" />
           <Stack.Screen name="health/fitness" />
           <Stack.Screen name="health/healthspan" />
           <Stack.Screen name="health/heart-rate" />

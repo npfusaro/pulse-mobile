@@ -245,6 +245,25 @@ function BloodOxygen({ o }: { o: HealthHubVM["bloodOxygen"] }) {
   );
 }
 
+/** Last night's HRV with Fitbit's deep-sleep RMSSD (fork): the five-minute curve Health Connect carries, plus what Google adds. */
+function NightHrv({ o }: { o: HealthHubVM["nightHrv"] }) {
+  if (!o) return <Text className={EMPTY}>Your HRV through the night, every five minutes, with the deep-sleep value and your typical range from Google. It shows here once last night has synced.</Text>;
+  const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  return (
+    <View className="gap-1">
+      <ValueUnit value={fmt(o.average)} unit="ms" className={TILE} />
+      <Text className={CAPTION}>
+        Last night{o.deep !== null && (
+          <>
+            {" · deep sleep "}
+            <Text className="font-numeric font-bold tabular-nums text-foreground">{fmt(o.deep)} ms</Text>
+          </>
+        )}
+      </Text>
+    </View>
+  );
+}
+
 const FOOTNOTE = "Estimates for personal insight, not medical advice.";
 
 /** The way to Nutrition (spec §7.22): static, so the hub's query stays as it is. */
@@ -284,6 +303,9 @@ export function HealthScreen() {
         </SectionShell>
         <SectionShell variant="card" title="Blood oxygen" href="/health/blood-oxygen">
           <BloodOxygen o={vm.bloodOxygen} />
+        </SectionShell>
+        <SectionShell variant="card" title="Night HRV" href="/health/night-hrv">
+          <NightHrv o={vm.nightHrv} />
         </SectionShell>
         {NUTRITION_CARD}
       </View>
@@ -363,6 +385,12 @@ function HealthLoading() {
           <View accessibilityElementsHidden className="gap-1">
             <SkeletonText lh={40} fs={36} className="w-[95px]" />
             <SkeletonText lh={16} fs={12} className="w-32" />
+          </View>
+        </SectionShell>
+        <SectionShell variant="card" title="Night HRV" href="/health/night-hrv">
+          <View accessibilityElementsHidden className="gap-1">
+            <SkeletonText lh={40} fs={36} className="w-[95px]" />
+            <SkeletonText lh={16} fs={12} className="w-40" />
           </View>
         </SectionShell>
         {NUTRITION_CARD}

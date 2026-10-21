@@ -36,7 +36,7 @@ Run `pnpm typecheck && pnpm lint && pnpm test` before every commit. Run the bund
 app/          Expo Router routes: one file per screen, _layout.tsx files are navigators. Routes live in the root app/, not in src/.
 src/
   health/     Health Connect: permissions, record → row mapping, sync, source policy, data check (halo); historyDays (fork)
-  google/     the Google Health API source (fork): auth, client, map, sync — the band's minute SpO2 into spo2_days
+  google/     the Google Health API source (fork): auth, client, map, sync — the band's minute SpO2 into spo2_days, and per night Fitbit's deep-sleep RMSSD and its HRV / resting-HR personal ranges into google_daily (merged into Metrics by allMetrics)
   data/       the Store interface, the async expo-sqlite store, the in-memory store for tests, the demo seed (halo)
   core/       pure TypeScript: engine/ (the Pulse engine, from the reference study: every score the screens show), scoring and algorithms (halo's, kept for the extras listed in docs/engine-plan.md Phase 7)
   pipeline/   stage 1 and stage 2: imported rows to stored scores (halo)
@@ -56,7 +56,7 @@ docs/         rewrite-plan.md, plan.md, design/spec.md, learning.md, onboarding.
 
 ## Rules
 
-- **Health Connect first, Android only.** No iOS config. The app asks for Health Connect read permissions only and never writes to Health Connect. **This fork adds one network source**, the Google Health API (`src/google`, `modules/pulse-google-auth`, `docs/google-health.md`), for the band's minute-by-minute blood oxygen only, which Fitbit never writes to Health Connect. It stays beside Health Connect, never replaces it, feeds no score, and keeps nothing about the Google account on the phone (no email, name or token: one "connected" flag). Any other network read needs the same justification.
+- **Health Connect first, Android only.** No iOS config. The app asks for Health Connect read permissions only and never writes to Health Connect. **This fork adds one network source**, the Google Health API (`src/google`, `modules/pulse-google-auth`, `docs/google-health.md`), for what Fitbit never writes to Health Connect: the band's minute-by-minute blood oxygen, and per night Fitbit's deep-sleep RMSSD and its personal ranges for HRV and resting HR. It stays beside Health Connect, never replaces it, and keeps nothing about the Google account on the phone (no email, name or token: one "connected" flag). It feeds one score, the way upstream already allowed for: the Health Monitor prefers the source's personal ranges when a day's Metrics carry them (`googleRanges` in scores.ts), and the Google rows are folded into Metrics by `allMetrics` (src/data/googleDaily.ts) rather than written to daily_metrics, which the Health Connect importer rewrites. Any other network read needs the same justification.
 - **No auth.** No accounts, no login screen, no user ids. Google's consent sheet is an authorization for one API scope, not a sign-in.
 - **Owner's own name and photo are fine.** The rule against storing a Google account's email, name or picture is about Google accounts. A display name and photo the owner types or picks (Settings › Profile) stay in the profile, the photo as a file in the app's document directory; neither leaves the phone.
 - **Only `src/data` touches SQLite.** Everything else goes through the `Store` interface (`src/data/store.ts`). Tests use the in-memory store (`src/data/memory.ts`).

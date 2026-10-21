@@ -15,12 +15,14 @@ No server, no account, no cloud: Pulse reads your Fitbit data from Health Connec
 </div>
 
 
-## Blood oxygen, minute by minute (this fork)
+## Blood oxygen and night HRV, minute by minute (this fork)
 
 Fitbit shows a nightly SpO2 average; Google's cloud holds every minute the band read, and Health Connect never gets
 them. This fork reads them from the Google Health API into a Blood oxygen screen (the night's chart, its low, minutes
-under 95%, the week), and makes the import history length a setting. It needs a build you sign yourself, registered
-with Google once: see [docs/google-health.md](docs/google-health.md).
+under 95%, the week), reads each night's deep-sleep HRV and Fitbit's own typical ranges for HRV and resting heart
+rate from the same API into a Night HRV screen (the five-minute RMSSD curve with deep sleep lit, the night against
+your range, the week) and the Health Monitor, and makes the import history length a setting. It needs a build you
+sign yourself, registered with Google once: see [docs/google-health.md](docs/google-health.md).
 
 ## Download
 

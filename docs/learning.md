@@ -731,3 +731,32 @@ rejects `NEEDS_CONSENT` instead of showing a sheet. The Cloud project needs the 
 the consent screen, and the app published (Testing drops grants after 7 days).
 
 Docs: [Android authorization](https://developer.android.com/identity/authorization), [Expo Modules API](https://docs.expo.dev/modules/module-api/).
+
+## Google's nightly extras beside Health Connect's rows (fork)
+
+What the Google Health API has for a night that Health Connect never gets is small and specific: Fitbit's
+deep-sleep RMSSD (and its own nightly average) from `daily-heart-rate-variability`, and its personal ranges for HRV
+and resting heart rate, which the API answers with only through `:dailyRollUp` on the daily types (the rolled-up
+value is `heartRateVariabilityPersonalRange` / `restingHeartRatePersonalRange`, one point a civil day). The
+five-minute HRV samples themselves are already in Health Connect, so the API's `heart-rate-variability` sample type
+would only duplicate `hrv_days` (its one extra per sample is LF/HF power).
+
+Upstream's `Metrics` already had columns for these (`hrvDeepMs`, `hrvRangeLow`…) and `scoreHealthMonitor` already
+prefers the source's ranges when a day carries them; on the phone they were just never filled. The catch is where to
+write them: the Health Connect importer rewrites `daily_metrics` (and `clearImported` drops it) for every window it
+re-reads, so Google's values written there would vanish on the next sync. They live in their own table,
+`google_daily`, upserted with `coalesce` so the nightly values and the ranges (separate requests) merge by day, and
+`allMetrics` folds them into each day's `Metrics`. Every reader goes through `allMetrics`, so stage 2 (which replays
+every day) sees the ranges on its next run and rewrites only the Health Monitor rows that changed; nothing is marked
+dirty. The Google sync walks every type in the same 14-day windows; `SYNC_VERSION` on the cursor makes an existing
+install re-walk its history window once so the new types are backfilled.
+
+```mermaid
+flowchart LR
+  HC[Health Connect] --> DM[(daily_metrics)]
+  G[Google: daily HRV list + 2 dailyRollUps] --> GD[(google_daily)]
+  DM --> AM[allMetrics: Google's deep RMSSD and ranges win, its average only fills a gap]
+  GD --> AM
+  AM --> HM[Stage 2: Health Monitor against Fitbit's ranges]
+  AM --> NH[/health/night-hrv: hrv_days curve + deep value + range]
+```
