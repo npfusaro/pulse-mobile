@@ -107,7 +107,8 @@ function Chart({ s }: { s: NightSpo2Series }) {
           <>
             <PlotCanvas width={width} height={height}>
               <GridLines ys={yTicks.map(y)} x0={x0} x1={x1} />
-              {hrPath && <StrokePath path={hrPath} width={1} paint={{ color: c.strain }} opacity={0.7} />}
+              {/* Heart rate in the Sleep page's neutral, not strain's blue: it must read apart from the SpO2 blue. */}
+              {hrPath && <StrokePath path={hrPath} width={1} paint={{ color: c.foreground }} opacity={0.55} />}
               {/* The 95% line only when the axis reaches under it: a steady night is not drawn against a threshold it never neared. */}
               {showLowLine && <DashedLine x1={x0} x2={x1} y1={y(LOW_PCT)} y2={y(LOW_PCT)} color={c.warning} dash={[4, 4]} />}
               {[bed, wake].map((t) => (
@@ -125,7 +126,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
                 </>
               )}
               {a && a.v !== null && <GlowDot x={tx(a.t)} y={y(a.v)} fill={c.sleep} />}
-              {a && aHr !== null && yr && <Circle cx={tx(a.t)} cy={yr(aHr)} r={3} color={c.strain} />}
+              {a && aHr !== null && yr && <Circle cx={tx(a.t)} cy={yr(aHr)} r={3} color={c.foreground} />}
             </PlotCanvas>
             {yTicks.map((t) => (
               <ChartLabel key={t} x={yTickX(x0)} y={y(t)} anchor="end" w={x0}>
@@ -134,7 +135,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
             ))}
             {yr &&
               hrAxis.map((t) => (
-                <ChartLabel key={`hr-${t}`} x={x1 + 6} y={yr(t)} anchor="start" w={28} color={c["strain-text"]}>
+                <ChartLabel key={`hr-${t}`} x={x1 + 6} y={yr(t)} anchor="start" w={28} color={c["foreground-secondary"]}>
                   {String(t)}
                 </ChartLabel>
               ))}
@@ -154,7 +155,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
             {a && (a.v !== null || aHr !== null) && (
               <TooltipCard x={tx(a.t)} width={width} title={clock(a.t, tz)}>
                 {a.v !== null && <TooltipLine color={c.sleep}>{`${a.v.toFixed(1)}%`}</TooltipLine>}
-                {aHr !== null && <TooltipLine color={c.strain}>{`${aHr} bpm`}</TooltipLine>}
+                {aHr !== null && <TooltipLine color={c.foreground}>{`${aHr} bpm`}</TooltipLine>}
               </TooltipCard>
             )}
           </>
