@@ -1,6 +1,7 @@
 // HRV across the main sleep (fork addition), after SleepHrChart: the band's one-every-five-minutes RMSSD with the
 // deep-sleep stretches lit, the bed and wake markers, Fitbit's personal range as a band, and the night's high
-// marked. The points are the samples themselves, so the line is broken only where the band skipped a stretch.
+// marked. The points are the samples themselves, so the line is broken only where the band skipped a stretch. Deep
+// sleep is lit in the sleep colour: the hypnogram's deep shade is too dark against the card in dark mode.
 import { useMemo, useState } from "react";
 import { View } from "react-native";
 import { Circle, Rect } from "@shopify/react-native-skia";
@@ -96,16 +97,16 @@ function Chart({ s }: { s: NightHrvSeries }) {
               {a && <DashedLine x1={tx(a.t)} x2={tx(a.t)} y1={y0} y2={y1} color={c["chart-cursor"]} />}
               <StrokePath path={linePath(mk("out"), "monotone")} width={1} paint={{ color: c["muted-foreground"] }} opacity={0.45} />
               <StrokePath path={linePath(mk("night"), "monotone")} width={1.25} paint={{ color: c["muted-foreground"] }} />
-              <FadeFill path={areaPath(mk("lit"), y1, "monotone")} color={c["sleep-deep"]} y0={litTop} y1={y1} from={0.28} to={0} />
-              <StrokePath path={linePath(mk("lit"), "monotone")} width={1.5} paint={{ color: c["sleep-deep"] }} />
-              {rows.map((r) => r.lone && <Circle key={r.t} cx={tx(r.t)} cy={y(r.v)} r={1.75} color={r.lit !== null ? c["sleep-deep"] : c["muted-foreground"]} />)}
+              <FadeFill path={areaPath(mk("lit"), y1, "monotone")} color={c.sleep} y0={litTop} y1={y1} from={0.28} to={0} />
+              <StrokePath path={linePath(mk("lit"), "monotone")} width={1.5} paint={{ color: c.sleep }} />
+              {rows.map((r) => r.lone && <Circle key={r.t} cx={tx(r.t)} cy={y(r.v)} r={1.75} color={r.lit !== null ? c.sleep : c["muted-foreground"]} />)}
               {high && (
                 <>
                   <Circle cx={tx(high.t)} cy={y(high.v)} r={5.5} color={c.card} />
                   <Circle cx={tx(high.t)} cy={y(high.v)} r={3.5} color={c.foreground} />
                 </>
               )}
-              {a && <GlowDot x={tx(a.t)} y={y(a.v)} fill={a.lit === null ? c.foreground : c["sleep-deep"]} />}
+              {a && <GlowDot x={tx(a.t)} y={y(a.v)} fill={a.lit === null ? c.foreground : c.sleep} />}
             </PlotCanvas>
             {yTicks.map((t) => (
               <ChartLabel key={t} x={yTickX(x0)} y={y(t)} anchor="end" w={x0}>
@@ -127,7 +128,7 @@ function Chart({ s }: { s: NightHrvSeries }) {
             <ScrubTick index={ai} />
             {a && (
               <TooltipCard x={tx(a.t)} width={width} title={clock(a.t, tz)}>
-                <TooltipLine color={a.lit === null ? c.foreground : c["sleep-deep"]}>{`${a.v} ms${a.lit === null ? "" : " · deep"}`}</TooltipLine>
+                <TooltipLine color={a.lit === null ? c.foreground : c.sleep}>{`${a.v} ms${a.lit === null ? "" : " · deep"}`}</TooltipLine>
               </TooltipCard>
             )}
           </>
