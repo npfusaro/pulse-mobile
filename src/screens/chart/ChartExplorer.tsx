@@ -85,9 +85,11 @@ const EMPTY_DAY: Record<DayView, string> = {
   stress: "No stress readings on this day.",
   energy: "No Energy Bank on this day.",
   sleep: "No night recorded for this day.",
+  spo2: "No blood oxygen readings on this night (the Google source brings them; Settings › Data source).",
+  hrv: "No HRV readings on this night.",
 };
 /** The compare's short name in the window's numbers ("Avg HR"). */
-const SHORT: Record<DayView, string> = { hr: "HR", strain: "strain", stress: "stress", energy: "energy", sleep: "HR" };
+const SHORT: Record<DayView, string> = { hr: "HR", strain: "strain", stress: "stress", energy: "energy", sleep: "HR", spo2: "SpO2", hrv: "HRV" };
 
 type Paint = { line: string; bands: Band[] | null; barColors: string[]; group: (v: number) => number; point: (v: number) => string };
 
@@ -249,7 +251,7 @@ export default function ChartExplorer() {
     // What a day view says of each point from its own data (else the window's: the normal range, the goal or the average).
     const refNotes = ref ? primary.ys.map((v) => noteFor(v, format, unit, { reference: ref })) : null;
     const viewNotes: (string | null)[] | null =
-      !dayVm || !view ? null : view === "sleep" ? stageNotes(primary.xs, dayVm.stages, dayVm.bed, dayVm.wake) : view === "strain" ? gainNotes(primary) : workouts ? workoutNotes(primary.xs, dayVm.spans).map((w, i) => w ?? refNotes?.[i] ?? null) : refNotes;
+      !dayVm || !view ? null : view === "sleep" || view === "spo2" || view === "hrv" ? stageNotes(primary.xs, dayVm.stages, dayVm.bed, dayVm.wake) : view === "strain" ? gainNotes(primary) : workouts ? workoutNotes(primary.xs, dayVm.spans).map((w, i) => w ?? refNotes?.[i] ?? null) : refNotes;
     const colors = primary.ys.map((v) => (v === null ? c["muted-foreground"] : paint.point(v)));
     // Group 3: today's running total, drawn faded in its own colour.
     const barGroup = primary.ys.map((v, i) => (v === null ? 0 : primary!.partial?.[i] ? 3 : paint.group(v)));
@@ -423,7 +425,7 @@ export default function ChartExplorer() {
             <LegendKey color={primaryColor} label={title} />
             {model?.ref && model.goal && <LegendKey color={c["chart-cursor"]} label={model.goal.label} mark="dash" />}
             {workouts && <LegendKey color={c.strain} label="Workouts" mark="block" />}
-            {view === "sleep" && (dayVm?.stages.length ?? 0) > 0 && (["awake", "rem", "light", "deep"] as const).map((s) => <LegendKey key={s} color={stageColor[s]} label={STAGE_NAME[s]} mark="dot" />)}
+            {(view === "sleep" || view === "spo2" || view === "hrv") && (dayVm?.stages.length ?? 0) > 0 && (["awake", "rem", "light", "deep"] as const).map((s) => <LegendKey key={s} color={stageColor[s]} label={STAGE_NAME[s]} mark="dot" />)}
             {canCompare &&
               (cmp ? (
                 <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel={`Stop comparing with ${compareName}`} onPress={() => (haptic.tap(), clearCompare())} className={cn(COMPARE, "shrink")}>

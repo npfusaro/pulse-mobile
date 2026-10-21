@@ -125,6 +125,12 @@ The **Health Monitor** would judge HRV and resting heart rate against Fitbit's r
 October 2026 it refuses the personal-range roll-ups on every identifier tried, Settings says so, and Pulse's own
 ranges stay.
 
+**Zoom** on either night card opens the chart explorer on that night (`/chart?metric=spo2&r=day` or `metric=hrv`):
+pinch to zoom, drag to pan, hold to inspect, with the night's heart rate beside the series on its own axis and the
+sleep stages under it, so a dip the heart answers (a breathing event) and one it ignores (the band's arm slept on,
+the sensor starved of blood) can be told apart minute by minute. The Blood oxygen and HRV metric pages gain a
+**Day** range for the same view.
+
 **Disconnect** forgets the connection, asks Google to revoke the grant and drops the samples and the nightly rows.
 The grant is also listed at myaccount.google.com › Security › Third-party access.
 

@@ -7,6 +7,7 @@ import { View } from "react-native";
 import { ChevronRight } from "lucide-react-native";
 import { DAY, dayLabel, formatDay, MISSING } from "@/lib/format";
 import { dayHref } from "@/lib/url";
+import { chartHref } from "@/screens/chart/href";
 import { getNightHrv } from "@/queries/nightHrv";
 import type { NightHrvVM } from "@/queries/types";
 import { NightHrvChart, NightHrvChartSkeleton } from "@/ui/charts/NightHrvChart";
@@ -140,6 +141,7 @@ export function NightHrvScreen() {
         <SectionShell
           variant="card"
           title={nightTitle}
+          action={{ label: "Zoom", href: chartHref({ metric: "hrv", r: "day", d }) }}
           info={{ title: "HRV through the night", body: "One RMSSD reading every five minutes from bedtime to waking; deep sleep is lit, since that is where HRV runs highest and steadiest. A break is a stretch the band could not read. The shaded band is your typical range: the Health Monitor’s, from your last month of nights, or Fitbit’s own when Google provides it." }}
         >
           <NightHrvChart data={series} />

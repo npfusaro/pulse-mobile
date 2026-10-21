@@ -108,6 +108,27 @@ describe("getChartDay", () => {
     for (const g of vm.stages) expect(g.to).toBeGreaterThan(g.from);
   });
 
+  it("gives the night's blood oxygen and HRV on the Sleep view's frame, with the stages, for heart rate to sit beside (fork)", async () => {
+    const spo2 = await getChartDay("spo2", day, ctx);
+    const hrv = await getChartDay("hrv", day, ctx);
+    const sleep = await getChartDay("sleep", day, ctx);
+    for (const vm of [spo2, hrv]) {
+      expect(vm.bed).toBe(sleep.bed);
+      expect(vm.wake).toBe(sleep.wake);
+      expect(vm.from).toBeLessThanOrEqual(vm.bed!);
+      expect(vm.to).toBeGreaterThanOrEqual(vm.wake!);
+      expect(vm.stages).toEqual(sleep.stages);
+      expect(vm.xs.length).toBeGreaterThan(40);
+      for (let i = 1; i < vm.xs.length; i++) expect(vm.xs[i]).toBeGreaterThan(vm.xs[i - 1]);
+    }
+    expect(spo2.ys.some((v) => v === null)).toBe(true); // a minute grid with the band's gaps
+    expect(spo2.ys.filter((v) => v !== null).every((v) => v! > 80 && v! <= 100)).toBe(true);
+    expect(hrv.ys.every((v) => v !== null && v > 0)).toBe(true); // the samples themselves, no grid
+    expect(chartDef("spo2")?.day).toBe("spo2");
+    expect(chartDef("hrv")?.day).toBe("hrv");
+    expect(DAY_VIEW.spo2.unit).toBe("%");
+  });
+
   it("builds Day Strain minute by minute and ends exactly on the day's Strain", async () => {
     for (const dd of [day, addDays(TODAY, -3), TODAY]) {
       const vm = await getChartDay("strain", dd, ctx);

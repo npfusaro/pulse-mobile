@@ -81,7 +81,7 @@ export function alignDaily(primary: ChartSeriesVM, other: ChartSeriesVM): (numbe
   return primary.days.map((d) => at.get(d) ?? null);
 }
 
-export const DAY_COLOR: Record<DayView, SeriesColor> = { hr: "zones", strain: "strain", stress: "stress", energy: "band", sleep: "single" };
+export const DAY_COLOR: Record<DayView, SeriesColor> = { hr: "zones", strain: "strain", stress: "stress", energy: "band", sleep: "single", spo2: "sleep", hrv: "single" };
 const DAY_FIXED: Partial<Record<DayView, [number, number]>> = { stress: [0, 100], energy: [0, 100] };
 
 /** A day view: x is minutes from local midnight. */
@@ -93,7 +93,8 @@ export function daySeries(vm: ChartDayVM, label: string, unit: string | undefine
     format,
     colorBy: DAY_COLOR[vm.view],
     mark: "line",
-    sparse: vm.view === "energy",
+    // The night's HRV is one reading every five minutes: drawn as a sparse series, so the line joins them.
+    sparse: vm.view === "energy" || vm.view === "hrv",
     ...(DAY_FIXED[vm.view] && { fixed: DAY_FIXED[vm.view] }),
     ...(vm.view === "strain" && { zero: true, cumulative: true }),
     xs: vm.xs,
@@ -109,10 +110,15 @@ export const DAY_COMPARE: readonly { view: DayView; key: string }[] = [
   { view: "strain", key: "strain" },
   { view: "stress", key: "stress" },
   { view: "energy", key: "energy" },
+  { view: "spo2", key: "spo2" },
+  { view: "hrv", key: "hrv" },
 ];
 
-/** What a day view draws beside it unless told otherwise: the day's heart rate under Strain, stress and the Energy Bank. */
-export const DAY_DEFAULT_COMPARE: Partial<Record<DayView, DayView>> = { strain: "hr", stress: "hr", energy: "hr" };
+/**
+ * What a day view draws beside it unless told otherwise: the day's heart rate under Strain, stress and the Energy
+ * Bank, and under the night's SpO2 and HRV (a dip the heart answers is a breathing event; one it ignores is the arm).
+ */
+export const DAY_DEFAULT_COMPARE: Partial<Record<DayView, DayView>> = { strain: "hr", stress: "hr", energy: "hr", spo2: "hr", hrv: "hr" };
 
 /** The `compare` param that turns a day view's default compare off. */
 export const NO_COMPARE = "none";
@@ -127,7 +133,7 @@ export function dayCompareView(view: DayView, picked: DayView | "none" | null): 
   return DAY_DEFAULT_COMPARE[view] ?? null;
 }
 
-const DAY_NOUN: Record<DayView, string> = { hr: "heart rate", strain: "strain", stress: "stress", energy: "the Energy Bank", sleep: "sleep" };
+const DAY_NOUN: Record<DayView, string> = { hr: "heart rate", strain: "strain", stress: "stress", energy: "the Energy Bank", sleep: "sleep", spo2: "blood oxygen", hrv: "HRV" };
 
 /** The header's line under the metric's name: what its day view draws, and what sits beside it. Short enough for two lines. */
 export function dayWhy(view: DayView, metric: string, compare: DayView | null): string {
@@ -136,6 +142,8 @@ export function dayWhy(view: DayView, metric: string, compare: DayView | null): 
   if (view === "stress") return `Stress minute by minute${w}`;
   if (view === "energy") return `Energy Bank through the day${w}`;
   if (view === "sleep") return "Heart rate and sleep stages, overnight";
+  if (view === "spo2") return `Blood oxygen minute by minute, overnight${w}`;
+  if (view === "hrv") return `HRV every five minutes, overnight${w}`;
   const base = metric === "rhr" ? "Heart rate against resting HR" : metric === "avg_hr" ? "Heart rate against its average" : metric === "workouts" ? "Heart rate, workouts highlighted" : "Heart rate minute by minute";
   return `${base}${w}`;
 }

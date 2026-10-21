@@ -9,8 +9,10 @@ import { addDays, fractionalYears } from "@/lib/time";
 import { type FormatKey, type GoodDirection } from "./_lib";
 import { type DayRow, dayStartOf, daySpans, exercisesBetween, finite, firstDay, loadDays, loadSeries, meanSd, ms, type QueryCtx, todayOf } from "./common";
 import { strainCurve } from "./dayStrain";
+import { nightSpo2Of } from "./bloodOxygen";
 import { getHeartRate, getStress } from "./health";
 import { energyBankVM } from "./home";
+import { nightHrvOf } from "./nightHrv";
 import { STEP_TARGET } from "./metric";
 import { getSleep } from "./sleep";
 import { TREND_GROUPS, TREND_METRICS, type TrendGroup } from "./trends";
@@ -20,7 +22,7 @@ export type ChartColorBy = "band" | "strain" | "sleep" | "single" | "stress";
  * The intraday view a metric opens on a single day: its own picture of the day, which the explorer overlays with the
  * day's heart rate (`hr`: the heart-rate metrics and workouts; `strain`: Day Strain building minute by minute).
  */
-export type DayView = "hr" | "strain" | "stress" | "sleep" | "energy";
+export type DayView = "hr" | "strain" | "stress" | "sleep" | "energy" | "spo2" | "hrv";
 
 export type ChartDef = {
   key: string;
@@ -52,7 +54,8 @@ export type ChartDef = {
 const LINE = new Set(["hrv", "rhr", "resp", "weight", "body_fat", "avg_hr", "glucose", "core_temp"]);
 const SPARSE = new Set(["weight", "body_fat", "glucose", "core_temp"]);
 const BASELINE = new Set(["hrv", "rhr", "resp", "avg_hr", "glucose", "core_temp"]);
-const DAY_OF: Record<string, DayView> = { rhr: "hr", avg_hr: "hr", strain: "strain", stress: "stress", sleep: "sleep", hours: "sleep", consistency: "sleep" };
+// spo2 and hrv (fork): the night's minute SpO2 and five-minute RMSSD, zoomable, with the night's heart rate beside them.
+const DAY_OF: Record<string, DayView> = { rhr: "hr", avg_hr: "hr", strain: "strain", stress: "stress", sleep: "sleep", hours: "sleep", consistency: "sleep", hrv: "hrv", spo2: "spo2" };
 const fixed = (colorBy: ChartColorBy): [number, number] | undefined => (colorBy === "band" ? [0, 100] : colorBy === "stress" ? [0, 100] : undefined);
 
 const isSunday = (day: string) => new Date(`${day}T00:00:00Z`).getUTCDay() === 0;
@@ -109,7 +112,7 @@ export const CHART_METRICS: readonly ChartDef[] = [
   },
   { key: "debt", label: "Sleep debt", group: "Recovery & sleep", unit: "h", format: "decimal1", colorBy: "sleep", direction: "down", pick: (r) => (r.sleep?.main ? r.sleep.debtMin / 60 : null), mark: "bar", day: "sleep" },
   { key: "energy", label: "Energy Bank", group: "Recovery & sleep", unit: "%", format: "int", colorBy: "band", direction: "up", pick: (r) => r.energyBank?.value, mark: "bar", domain: [0, 100], day: "energy" },
-  { key: "spo2", label: "Blood oxygen", group: "Vitals", unit: "%", format: "decimal1", colorBy: "single", direction: "up", pick: (r) => r.metrics?.spo2Pct, mark: "line", baseline: true },
+  { key: "spo2", label: "Blood oxygen", group: "Vitals", unit: "%", format: "decimal1", colorBy: "single", direction: "up", pick: (r) => r.metrics?.spo2Pct, mark: "line", baseline: true, day: "spo2" },
   { key: "skin_temp", label: "Skin temp (from baseline)", group: "Vitals", unit: "°C", format: "signed1", colorBy: "single", direction: "neutral", pick: (r) => r.recovery?.inputs.skinTempDev, mark: "line", baseline: true },
   { key: "vo2max", label: "VO2 max", group: "Vitals", unit: "ml/kg/min", format: "decimal1", colorBy: "single", direction: "up", pick: (r) => r.metrics?.vo2maxRun ?? r.metrics?.vo2maxDaily, mark: "line", sparse: true },
   {
@@ -138,6 +141,8 @@ export const DAY_VIEW: Record<DayView, { label: string; unit?: string; format: F
   stress: { label: "Stress", format: "int" },
   sleep: { label: "Night heart rate", unit: "bpm", format: "int" },
   energy: { label: "Energy Bank", unit: "%", format: "int" },
+  spo2: { label: "Blood oxygen", unit: "%", format: "decimal1" },
+  hrv: { label: "HRV", unit: "ms", format: "decimal1" },
 };
 
 // ── Daily series ────────────────────────────────────────────────────────────
@@ -320,6 +325,28 @@ export async function getChartDay(view: DayView, day: string, ctx: QueryCtx): Pr
       ys: eb.curve.map((p) => p.v),
       spans: eb.naps.map((n) => ({ kind: "sleep" as const, label: "Nap", from: m(n.start), to: m(n.end) })),
       now: day === today ? m(eb.until) : null,
+    };
+  }
+  if (view === "spo2" || view === "hrv") {
+    // The night's minute SpO2 (the Google source) or five-minute RMSSD (Health Connect) across the main sleep, with
+    // its stages under it, on the Sleep view's frame; the explorer puts the night's heart rate beside it.
+    const [vm, rows] = await Promise.all([getSleep(day, ctx), loadDays(ctx, day, day)]);
+    const main = rows.get(day)?.sleep?.main;
+    const st = vm.stages?.value;
+    if (!main) return base;
+    const pts: { t: number; v: number | null }[] = view === "spo2" ? (await nightSpo2Of(ctx, main.start, main.end)).points : (await nightHrvOf(ctx, main)).points;
+    const xs = pts.map((p) => m(p.t));
+    const lo = Math.min(m(ms(main.start)) - 15, xs[0] ?? Infinity);
+    const hi = Math.max(m(ms(main.end)) + 15, xs[xs.length - 1] ?? -Infinity);
+    return {
+      ...base,
+      from: lo,
+      to: Math.max(hi, lo + 60),
+      xs,
+      ys: pts.map((p) => p.v),
+      stages: st?.segments.map((g) => ({ stage: g.stage, from: m(g.start), to: m(g.end) })) ?? [],
+      bed: m(ms(main.start)),
+      wake: m(ms(main.end)),
     };
   }
   // The night: heart rate across the main sleep with its stages under it.

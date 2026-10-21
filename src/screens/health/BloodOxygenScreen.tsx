@@ -7,6 +7,7 @@ import { View } from "react-native";
 import { ChevronRight } from "lucide-react-native";
 import { DAY, dayLabel, formatDay, MISSING } from "@/lib/format";
 import { dayHref } from "@/lib/url";
+import { chartHref } from "@/screens/chart/href";
 import { getBloodOxygen } from "@/queries/bloodOxygen";
 import type { BloodOxygenVM } from "@/queries/types";
 import { NightSpo2Chart, NightSpo2ChartSkeleton } from "@/ui/charts/NightSpo2Chart";
@@ -140,6 +141,7 @@ export function BloodOxygenScreen() {
         <SectionShell
           variant="card"
           title={nightTitle}
+          action={{ label: "Zoom", href: chartHref({ metric: "spo2", r: "day", d }) }}
           info={{ title: "Blood oxygen through the night", body: "Each minute the band could read, from bedtime to waking, with your heart rate on the right-hand axis. A gap is a minute the band could not read: movement, or the arm it is on being slept on. A dip your heart rate answers with a jump a minute or two later is a breathing event; a dip or a gap it ignores is almost always the arm, not the lungs. The dashed line marks 95%, under which readings count as low." }}
         >
           {vm.connected ? (
