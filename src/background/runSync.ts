@@ -88,7 +88,7 @@ async function run(store: Store, profile: Profile, source: Source, opts: RunSync
       const historyDays = await getHistoryDays();
       const r = await timed(`sync-health-connect (${opts.owner})`, () => syncHealthConnect(store, { timeZone: opts.timeZone, historyDays, onProgress: opts.onProgress }));
       warnings.push(...(r.warnings ?? []));
-      // Google Health (blood oxygen) beside it: its own cursor and warnings; it throws nothing (sync.ts).
+      // Google Health (blood oxygen, nightly HRV and ranges) beside it: its own cursor and warnings; it throws nothing (sync.ts).
       if (await isGoogleConnected()) {
         const g = await timed(`sync-google (${opts.owner})`, () => syncGoogle(store, { timeZone: opts.timeZone, historyDays, onProgress: opts.onProgress }));
         warnings.push(...g.warnings);

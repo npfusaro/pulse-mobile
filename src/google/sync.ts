@@ -1,23 +1,31 @@
-// The Google Health API source: the band's minute-by-minute blood oxygen into spo2_days, after the server app's
-// src/server/sources/google/sync.ts. A first import walks the history window oldest first in 14-day windows, each
-// committed with its cursor so an interrupted import resumes; later syncs re-read from a few days before the cursor.
-// Within a window the stored samples become exactly what Google returned (a reading deleted upstream goes), as the
-// server does for heart rate. Nothing here feeds a score, so no day is marked dirty and the pipeline is untouched.
+// The Google Health API source, after the server app's src/server/sources/google/sync.ts: the band's
+// minute-by-minute blood oxygen into spo2_days, and per night Fitbit's average and deep-sleep RMSSD and its personal
+// ranges for HRV and resting HR into google_daily. A first import walks the history window oldest first in 14-day
+// windows, each committed with its cursor so an interrupted import resumes; later syncs re-read from a few days
+// before the cursor. Within a window the stored SpO2 samples become exactly what Google returned (a reading deleted
+// upstream goes), as the server does for heart rate; the nightly rows merge by day. The ranges reach the Health
+// Monitor through allMetrics (stage 2 replays every day, so no day needs marking dirty); nothing else is scored.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Store } from "@/data/store";
-import type { Spo2Sample } from "@/data/types";
+import type { GoogleDaily, Spo2Sample } from "@/data/types";
 import { addDays, localDay, localMidnight } from "@/lib/time";
 import { accessToken, GoogleAuthError } from "./auth";
 import { createGoogleClient, DATA_TYPES, type GoogleClient, GoogleError, localWindows } from "./client";
-import { mapOxygenSaturation } from "./map";
+import { mapDailyHrv, mapOxygenSaturation, mapPersonalRange } from "./map";
 
 export const GOOGLE_SYNC_KEY = "pulse.google.spo2";
+/** Bumped when a sync starts reading a new type: an older cursor re-walks the history window so the type is backfilled. */
+export const SYNC_VERSION = 2;
+/** Every window is this wide: the shortest limit among the types read (oxygen-saturation's). */
+export const WINDOW_DAYS = DATA_TYPES["oxygen-saturation"].maxDays;
 
 /** Later syncs re-read this many local days before the cursor: a night's readings land hours after the band syncs. */
 export const OVERLAP_DAYS = 3;
 
 /** What the import remembers, outside the Store (it describes Google, not Pulse's rows). */
 export type GoogleSyncState = {
+  /** The SYNC_VERSION the cursor was written under; an older one is treated as no cursor. */
+  version: number;
   /** The end of the last committed window, unix seconds; null before the first. */
   syncedThrough: number | null;
   /** The history window the import was started with; a longer setting re-walks from the new start. */
@@ -28,7 +36,7 @@ export type GoogleSyncState = {
   lastError: string | null;
 };
 
-const EMPTY: GoogleSyncState = { syncedThrough: null, backfillDays: null, backfillDone: 0, lastSuccessAt: null, lastError: null };
+const EMPTY: GoogleSyncState = { version: 0, syncedThrough: null, backfillDays: null, backfillDone: 0, lastSuccessAt: null, lastError: null };
 
 export async function readGoogleSyncState(): Promise<GoogleSyncState> {
   try {
@@ -63,8 +71,10 @@ export type GoogleSyncOptions = {
 };
 
 export type GoogleSyncResult = {
-  /** Samples written. */
+  /** Blood-oxygen samples written. */
   samples: number;
+  /** Nightly rows (daily HRV, personal ranges) written. */
+  nights: number;
   /** Hints, never errors: "google_needs_consent", "google_error:<code>". */
   warnings: string[];
 };
@@ -81,6 +91,7 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
   const progress = opts.onProgress ?? (() => {});
   const warnings: string[] = [];
   let samples = 0;
+  let nights = 0;
   try {
     // Never interactive: only Settings › Connect Google shows the consent sheet. A grant revoked since then surfaces
     // as the google_needs_consent warning, which Settings turns into "Reconnect".
@@ -89,9 +100,9 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
     const today = localDay(t, tz);
     const st = await readGoogleSyncState();
 
-    // A first import, or a window longer than the one already walked: from the window's start. Otherwise from a
-    // few days before the cursor. A shorter setting removes nothing.
-    const fresh = st.syncedThrough === null;
+    // A first import (or a cursor from before a type was added), or a window longer than the one already walked:
+    // from the window's start. Otherwise from a few days before the cursor. A shorter setting removes nothing.
+    const fresh = st.syncedThrough === null || st.version !== SYNC_VERSION;
     const grow = !fresh && st.backfillDays !== null && opts.historyDays > st.backfillDays && st.backfillDone >= st.backfillDays;
     const total = fresh || grow ? opts.historyDays : (st.backfillDays ?? opts.historyDays);
     const backfilling = fresh || grow || st.backfillDone < total;
@@ -99,17 +110,18 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
     let from: number;
     if (fresh || grow) {
       from = localMidnight(addDays(today, 1 - total), tz);
-      await writeGoogleSyncState({ backfillDays: total, backfillDone: 0 });
+      await writeGoogleSyncState({ version: SYNC_VERSION, syncedThrough: null, backfillDays: total, backfillDone: 0 });
     } else if (backfilling) {
       from = st.syncedThrough!;
     } else {
       from = localMidnight(addDays(localDay(st.syncedThrough!, tz), -OVERLAP_DAYS), tz);
     }
 
-    const windows = localWindows(from, t, DATA_TYPES["oxygen-saturation"].maxDays, tz);
+    const windows = localWindows(from, t, WINDOW_DAYS, tz);
     for (const [i, win] of windows.entries()) {
-      progress("google:spo2", backfilling ? done : i, backfilling ? total : windows.length);
-      samples += await spo2Window(client, store, win);
+      progress("google", backfilling ? done : i, backfilling ? total : windows.length);
+      samples += await spo2Window(client, store, win, tz);
+      nights += await nightsWindow(client, store, win, tz);
       if (backfilling) done = Math.min(total, done + daysIn(win, tz));
       await writeGoogleSyncState({ syncedThrough: win.end, ...(backfilling && { backfillDone: done }) });
     }
@@ -119,17 +131,35 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
     warnings.push(code === "needs_consent" ? "google_needs_consent" : `google_error:${code}`);
     await writeGoogleSyncState({ lastError: e instanceof Error ? e.message : String(e) });
   }
-  return { samples, warnings };
+  return { samples, nights, warnings };
 }
 
 /** Reads one window's points page by page and replaces the window's stored samples with them. */
-async function spo2Window(client: GoogleClient, store: Store, win: { start: number; end: number }): Promise<number> {
+async function spo2Window(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string): Promise<number> {
   const raw: unknown[] = [];
-  await client.listEach("oxygen-saturation", win, (points) => raw.push(...points));
+  await client.listEach("oxygen-saturation", win, tz, (points) => raw.push(...points));
   const samples: Spo2Sample[] = mapOxygenSaturation(raw);
   // Only when the window has readings, so an empty or unreadable answer never wipes a night (the server's guard).
   if (samples.length) await store.replaceSpo2(win.start, win.end, samples);
   return samples.length;
+}
+
+/**
+ * One window's nightly rows: the daily HRV list (average and deep-sleep RMSSD) and the two personal-range roll-ups,
+ * merged into google_daily by day. Nothing is deleted: a night Google no longer answers for keeps its last values.
+ */
+async function nightsWindow(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string): Promise<number> {
+  const rows: GoogleDaily[] = [];
+  const daily: unknown[] = [];
+  await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
+  rows.push(...mapDailyHrv(daily));
+  for (const type of ["daily-heart-rate-variability", "daily-resting-heart-rate"] as const) {
+    const raw: unknown[] = [];
+    await client.rollupEach(type, win, tz, (points) => raw.push(...points));
+    rows.push(...mapPersonalRange(type, raw));
+  }
+  if (rows.length) await store.upsertGoogleDaily(rows);
+  return new Set(rows.map((r) => r.day)).size;
 }
 
 /** Local days a window touches. */

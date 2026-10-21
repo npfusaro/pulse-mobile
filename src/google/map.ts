@@ -1,5 +1,6 @@
 // Google Health API data points → Pulse rows, after the server app's src/server/sources/google/map.ts.
-import type { Spo2Sample } from "@/data/types";
+import type { GoogleDaily, Spo2Sample } from "@/data/types";
+import { ROLLUP_KEY, type RollupTypeId } from "./client";
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -45,3 +46,53 @@ export function mapOxygenSaturation(points: unknown[]): Spo2Sample[] {
     .sort((a, b) => a[0] - b[0])
     .map(([ts, pct]) => ({ ts, pct }));
 }
+
+/** `YYYY-MM-DD` from a civil `{year, month, day}` (numbers, or numeric strings). */
+function civil(v: unknown): string | null {
+  const [y, m, d] = ["year", "month", "day"].map((k) => num(at(v, k)));
+  if (y === null || m === null || d === null) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+const EMPTY_DAILY: Omit<GoogleDaily, "day"> = { hrvMs: null, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null, rhrRangeLow: null, rhrRangeHigh: null };
+
+/**
+ * `daily-heart-rate-variability` points → one row a day: Fitbit's nightly average RMSSD and its deep-sleep RMSSD, to
+ * one decimal, on Google's civil date (the wake day). A point with neither is skipped; a repeated day keeps the last.
+ */
+export function mapDailyHrv(points: unknown[]): GoogleDaily[] {
+  const byDay = new Map<string, GoogleDaily>();
+  for (const p of points) {
+    const o = at(p, "dailyHeartRateVariability");
+    const day = civil(at(o, "date"));
+    if (!day) continue;
+    const hrvMs = tenth(num(at(o, "averageHeartRateVariabilityMilliseconds")));
+    const hrvDeepMs = tenth(num(at(o, "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds")));
+    if (hrvMs === null && hrvDeepMs === null) continue;
+    byDay.set(day, { ...EMPTY_DAILY, day, hrvMs, hrvDeepMs });
+  }
+  return [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+}
+
+/**
+ * A `:dailyRollUp` on a daily type → one row a day holding Fitbit's personal range for that vital as of the day
+ * (`civilStartTime.date`): HRV in ms to one decimal, resting HR in whole bpm. A range needs both ends and low < high;
+ * a day without one is skipped, so a renamed value writes nothing rather than nulls.
+ */
+export function mapPersonalRange(type: RollupTypeId, points: unknown[]): GoogleDaily[] {
+  const byDay = new Map<string, GoogleDaily>();
+  for (const p of points) {
+    const day = civil(at(p, "civilStartTime.date"));
+    const o = at(p, ROLLUP_KEY[type]);
+    if (!day || !isObj(o)) continue;
+    const hrv = type === "daily-heart-rate-variability";
+    const low = hrv ? tenth(num(o.averageHeartRateVariabilityMillisecondsMin)) : whole(num(o.beatsPerMinuteMin));
+    const high = hrv ? tenth(num(o.averageHeartRateVariabilityMillisecondsMax)) : whole(num(o.beatsPerMinuteMax));
+    if (low === null || high === null || low >= high) continue;
+    byDay.set(day, { ...EMPTY_DAILY, day, ...(hrv ? { hrvRangeLow: low, hrvRangeHigh: high } : { rhrRangeLow: low, rhrRangeHigh: high }) });
+  }
+  return [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+}
+
+const tenth = (v: number | null) => (v === null || v <= 0 ? null : Math.round(v * 10) / 10);
+const whole = (v: number | null) => (v === null || v <= 0 ? null : Math.round(v));

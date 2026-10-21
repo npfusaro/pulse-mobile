@@ -308,13 +308,14 @@ export async function connectGoogle(): Promise<void> {
   await run();
 }
 
-/** Forgets the Google connection and its cursor, revokes the grant and drops the blood-oxygen samples. */
+/** Forgets the Google connection and its cursor, revokes the grant and drops what it imported (SpO2, nightly rows). */
 export async function disconnectGoogle(): Promise<void> {
   const { store } = state;
   if (running) await running.catch(() => {});
   await revokeGoogle();
   await forgetGoogleSync();
   await store?.clearSpo2();
+  await store?.clearGoogleDaily();
   patch({ warnings: state.warnings.filter((w) => !w.startsWith("google_")) });
   dataChanged();
 }
@@ -353,8 +354,8 @@ const STEP_LABEL: Record<string, string> = {
 export const stepLabel = (step: string): string =>
   step.startsWith("read:day:")
     ? "Reading Health Connect"
-    : step === "google:spo2"
-      ? "Reading blood oxygen from Google"
+    : step === "google"
+      ? "Reading blood oxygen and HRV from Google"
     : step.startsWith("read:")
       ? `Reading ${step.slice(5).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()}`
       : (STEP_LABEL[step] ?? step);

@@ -1,6 +1,6 @@
 // The storage contract every layer talks to: the importer writes rows, the pipeline reads rows and writes scores,
 // the screen queries read both. One implementation on expo-sqlite (db.ts); tests may use an in-memory one.
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
+import type { DailyValue, Exercise, GoogleDaily, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { Stage1Activity, Stage1Day, Stage2Row } from "@/pipeline/types";
 import type { Report } from "@/core/algorithms/reports";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
@@ -32,6 +32,15 @@ export interface Store {
   replaceSpo2(fromTs: number, toTs: number, samples: Spo2Sample[]): Promise<void>;
   /** Drops every blood-oxygen sample (Google disconnected). */
   clearSpo2(): Promise<void>;
+  /**
+   * Google's nightly extras (src/google), merged by day: a null never overwrites a stored value, since the nightly
+   * values and the personal ranges arrive from different requests. `allMetrics` folds them into each day's Metrics
+   * (Google's deep-sleep RMSSD and ranges, which Health Connect never has; Google's average only where Health
+   * Connect's is missing). A Health Connect re-import (clearImported) never touches them.
+   */
+  upsertGoogleDaily(rows: GoogleDaily[]): Promise<void>;
+  /** Drops every Google nightly row (Google disconnected). */
+  clearGoogleDaily(): Promise<void>;
   upsertDailyValues(rows: DailyValue[]): Promise<void>;
   setJournal(entry: JournalEntry): Promise<void>;
   deleteJournal(day: string, tag: string): Promise<void>;
@@ -53,6 +62,7 @@ export interface Store {
   takeIntradayDirty(): Promise<string[]>;
 
   // Reads
+  /** Every day's metrics, by day, with Google's nightly extras folded in (upsertGoogleDaily). */
   allMetrics(): Promise<Metrics[]>;
   allSessions(): Promise<Session[]>;
   segmentsFor(sessionIds: string[]): Promise<Segment[]>;

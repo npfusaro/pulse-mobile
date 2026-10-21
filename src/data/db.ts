@@ -4,8 +4,9 @@
 // row per 1 Hz sample is far too slow over months. Every batch write runs in one exclusive transaction.
 import { deleteDatabaseAsync, openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { isDeadConnection } from "./deadConnection";
+import { mergeGoogleDaily } from "./googleDaily";
 import type { CoachChatRow, DayRange, EntrySource, JournalTagChange, JournalTagRow, LoggedEntryRow, ReportRow, ScoreRow, SeriesKind, Store } from "./store";
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
+import type { DailyValue, Exercise, GoogleDaily, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
 import { slice } from "@/lib/yield";
 
@@ -38,6 +39,9 @@ create table if not exists hr_days (bucket integer primary key, offsets text not
 create table if not exists steps_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists hrv_days (bucket integer primary key, offsets text not null, vals text not null);
 create table if not exists spo2_days (bucket integer primary key, offsets text not null, vals text not null);
+create table if not exists google_daily (
+  day text primary key, hrv_ms real, hrv_deep_ms real, hrv_range_low real, hrv_range_high real, rhr_range_low real, rhr_range_high real
+);
 create table if not exists daily_values (day text not null, key text not null, value real not null, primary key (day, key));
 create table if not exists journal_entries (day text not null, tag text not null, value real not null, primary key (day, tag));
 create table if not exists intraday_dirty (day text primary key);
@@ -98,6 +102,10 @@ type MetricsRow = {
   vigorous_peak_min: number | null; temp_baseline_c: number | null; temp_sd_c: number | null; rhr_range_low: number | null;
   rhr_range_high: number | null; hrv_range_low: number | null; hrv_range_high: number | null;
 };
+type GoogleDailyRow = {
+  day: string; hrv_ms: number | null; hrv_deep_ms: number | null; hrv_range_low: number | null; hrv_range_high: number | null;
+  rhr_range_low: number | null; rhr_range_high: number | null;
+};
 type SessionRow = {
   id: string; day: string; start_ts: number; end_ts: number; is_main: number; processed: number; stages_status: string | null;
   asleep_min: number | null; awake_min: number | null; deep_min: number | null; light_min: number | null; rem_min: number | null;
@@ -136,6 +144,22 @@ const metricsOf = (r: MetricsRow): Metrics => ({
   hrvRangeLow: r.hrv_range_low,
   hrvRangeHigh: r.hrv_range_high,
 });
+const googleDailyOf = (r: GoogleDailyRow): GoogleDaily => ({
+  day: r.day,
+  hrvMs: r.hrv_ms,
+  hrvDeepMs: r.hrv_deep_ms,
+  hrvRangeLow: r.hrv_range_low,
+  hrvRangeHigh: r.hrv_range_high,
+  rhrRangeLow: r.rhr_range_low,
+  rhrRangeHigh: r.rhr_range_high,
+});
+/** Upsert that keeps a stored value where the new row has null: the nightly values and the ranges come separately. */
+const GOOGLE_DAILY_SQL = `insert into google_daily (day, hrv_ms, hrv_deep_ms, hrv_range_low, hrv_range_high, rhr_range_low, rhr_range_high)
+  values (?, ?, ?, ?, ?, ?, ?)
+  on conflict (day) do update set
+    hrv_ms = coalesce(excluded.hrv_ms, hrv_ms), hrv_deep_ms = coalesce(excluded.hrv_deep_ms, hrv_deep_ms),
+    hrv_range_low = coalesce(excluded.hrv_range_low, hrv_range_low), hrv_range_high = coalesce(excluded.hrv_range_high, hrv_range_high),
+    rhr_range_low = coalesce(excluded.rhr_range_low, rhr_range_low), rhr_range_high = coalesce(excluded.rhr_range_high, rhr_range_high)`;
 const metricsParams = (m: Metrics): Param[] => [
   m.day, m.hrvMs, m.hrvDeepMs, m.rhrBpm, m.respBpm, m.nightlyTempC, m.spo2Pct, m.vo2maxDaily, m.vo2maxRun, m.steps, m.calories,
   m.weightKg, m.bodyFatPct, json(m.hrZones), m.lightModerateMin, m.vigorousPeakMin, m.tempBaselineC, m.tempSdC, m.rhrRangeLow,
@@ -343,6 +367,13 @@ class SqliteStore implements Store {
   async clearSpo2() {
     await this.tx((db) => db.runAsync("delete from spo2_days"));
   }
+  async upsertGoogleDaily(rows: GoogleDaily[]) {
+    if (!rows.length) return;
+    await this.tx((db) => this.many(db, GOOGLE_DAILY_SQL, rows.map((g) => [g.day, g.hrvMs, g.hrvDeepMs, g.hrvRangeLow, g.hrvRangeHigh, g.rhrRangeLow, g.rhrRangeHigh])));
+  }
+  async clearGoogleDaily() {
+    await this.tx((db) => db.runAsync("delete from google_daily"));
+  }
 
   /** Merges samples into their UTC-day buckets, replacing by ts, in one transaction. */
   private async putSamples(table: SampleTable, samples: { ts: number; v: number }[]) {
@@ -463,7 +494,11 @@ class SqliteStore implements Store {
   // ── Reads ─────────────────────────────────────────────────────────────────
 
   async allMetrics() {
-    return (await this.db.getAllAsync<MetricsRow>("select * from daily_metrics order by day")).map(metricsOf);
+    const [rows, google] = await Promise.all([
+      this.db.getAllAsync<MetricsRow>("select * from daily_metrics order by day"),
+      this.db.getAllAsync<GoogleDailyRow>("select * from google_daily order by day"),
+    ]);
+    return mergeGoogleDaily(rows.map(metricsOf), google.map(googleDailyOf));
   }
   async allSessions() {
     return (await this.db.getAllAsync<SessionRow>("select * from sleep_sessions order by start_ts, id")).map(sessionOf);
@@ -713,7 +748,7 @@ class SqliteStore implements Store {
 type SampleTable = "hr_days" | "steps_days" | "hrv_days" | "spo2_days";
 
 const TABLES = [
-  "profile", "sync_state", "daily_metrics", "sleep_sessions", "sleep_segments", "exercises", "hr_days", "steps_days", "hrv_days", "spo2_days", "daily_values",
+  "profile", "sync_state", "daily_metrics", "sleep_sessions", "sleep_segments", "exercises", "hr_days", "steps_days", "hrv_days", "spo2_days", "google_daily", "daily_values",
   "journal_entries", "intraday_dirty", "daily_scores", "intraday_series", "reports", "activity_cost",
   "journal_tags", "logged_entries", "health_records",
 ];

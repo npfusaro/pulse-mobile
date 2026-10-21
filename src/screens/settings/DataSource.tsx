@@ -289,10 +289,10 @@ function GoogleHealth({ syncing, warnings, now }: { syncing: boolean; warnings: 
       <Text className={cn("text-[15px] leading-[22px]", (needsConsent || failed) && "text-warning-text")}>{line}</Text>
       <Text className={HINT}>
         {state === "connected"
-          ? "Reads your band's minute-by-minute blood oxygen, which Fitbit keeps in Google's cloud and never writes to Health Connect. Nothing else; nothing about your account is kept."
+          ? "Reads what Fitbit keeps in Google's cloud and never writes to Health Connect: your band's minute-by-minute blood oxygen, each night's deep-sleep HRV, and Fitbit's own typical ranges for HRV and resting heart rate (the Health Monitor uses them). Nothing about your account is kept."
           : state === "unavailable"
             ? "The Google Health API needs Google Play services, which this phone doesn't have."
-            : "Fitbit shows only a nightly blood-oxygen average. Google's cloud holds every minute the band read; connect to see them on the Blood oxygen screen. Needs this build registered with Google (docs/google-health.md)."}
+            : "Fitbit shows only a nightly blood-oxygen average. Google's cloud holds every minute the band read, plus each night's deep-sleep HRV and Fitbit's typical ranges; connect to see them on the Blood oxygen and Night HRV screens. Needs this build registered with Google (docs/google-health.md)."}
       </Text>
       {state === "connected" ? (
         <View className="flex-row gap-2">

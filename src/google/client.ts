@@ -12,13 +12,29 @@ const MAX_WAIT_MS = 60_000;
 const MAX_PAGES = 1000;
 const FETCH_TIMEOUT_MS = 30_000;
 
-/** The types Pulse Mobile reads from Google. Only sample types so far: `member` is the filterable time field. */
+/**
+ * The types Pulse Mobile reads from Google: `member` is the filterable time field (a sample's instant in UTC, or a
+ * daily type's civil `date`), `maxDays` the longest window one request may cover. Every one is walked in the same
+ * 14-day windows (src/google/sync.ts), so a daily type's longer limit goes unused.
+ */
 export const DATA_TYPES = {
   // The band's minute-by-minute SpO2 (asleep only, unreliable minutes left out): one point a minute, so a night is a
   // few hundred points and a 14-day window stays well under one page.
   "oxygen-saturation": { member: "sample_time.physical_time", maxDays: 14, pageSize: 10_000 },
+  // One point a night: Fitbit's average RMSSD and its deep-sleep RMSSD. Its dailyRollUp answers with the personal
+  // range instead (heartRateVariabilityPersonalRange), the band of nights Fitbit calls typical as of each day.
+  "daily-heart-rate-variability": { member: "date", maxDays: 90, pageSize: 10_000 },
+  // Listed for nothing yet; its dailyRollUp is the resting-HR personal range (restingHeartRatePersonalRange).
+  "daily-resting-heart-rate": { member: "date", maxDays: 90, pageSize: 10_000 },
 } as const;
 export type DataTypeId = keyof typeof DATA_TYPES;
+
+/** The types whose `:dailyRollUp` Pulse reads, and the key its value sits under in each rolled-up point. */
+export const ROLLUP_KEY = {
+  "daily-heart-rate-variability": "heartRateVariabilityPersonalRange",
+  "daily-resting-heart-rate": "restingHeartRatePersonalRange",
+} as const;
+export type RollupTypeId = keyof typeof ROLLUP_KEY;
 
 export class GoogleError extends Error {
   constructor(
@@ -47,12 +63,28 @@ export function localWindows(from: number, to: number, maxDays: number, tz: stri
   return out;
 }
 
-/** `<snake_type>.<member> >= X AND <snake_type>.<member> < Y`, in RFC 3339 UTC. */
-export function buildFilter(type: DataTypeId, w: TimeWindow): string {
+/**
+ * `<snake_type>.<member> >= X AND <snake_type>.<member> < Y`: instants in RFC 3339 UTC; a daily type's `date` as the
+ * window's local days, the end rounded up to a whole day (a window ends at local midnight, so `< end day` excludes
+ * exactly the days after it).
+ */
+export function buildFilter(type: DataTypeId, w: TimeWindow, tz: string): string {
   const field = `${type.replaceAll("-", "_")}.${DATA_TYPES[type].member}`;
-  const [lo, hi] = [w.start, w.end].map((s) => new Date(s * 1000).toISOString());
+  const [lo, hi] = DATA_TYPES[type].member === "date" ? [localDay(w.start, tz), localDay(ceilMidnight(w.end, tz), tz)] : [w.start, w.end].map((s) => new Date(s * 1000).toISOString());
   return `${field} >= "${lo}" AND ${field} < "${hi}"`;
 }
+
+/** `s` if it is a local midnight, else the next one. */
+const ceilMidnight = (s: number, tz: string) => {
+  const day = localDay(s, tz);
+  return localMidnight(day, tz) === s ? s : localMidnight(addDays(day, 1), tz);
+};
+
+/** A `CivilDateTime` of a local day's midnight, as the dailyRollUp range wants it. */
+const civilDate = (day: string) => {
+  const [year, month, d] = day.split("-").map(Number);
+  return { date: { year, month, day: d } };
+};
 
 export type ClientDeps = {
   /** A fresh access token; called again after a 401 (`retry` true) before the request is given up as revoked. */
@@ -94,7 +126,7 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
   }
 
   /** The 200 body. One fresh token on 401, then `auth_revoked`; 429 waits Retry-After; 5xx and network back off. */
-  async function request(url: string, where: string): Promise<string> {
+  async function request(url: string, where: string, body?: string): Promise<string> {
     let tries = 0;
     let refreshed = false;
     for (;;) {
@@ -102,7 +134,11 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
       await throttle();
       let res: Response;
       try {
-        res = await fetchFn(url, { headers: { authorization: `Bearer ${bearer}` }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+        res = await fetchFn(url, {
+          ...(body !== undefined && { method: "POST", body }),
+          headers: { authorization: `Bearer ${bearer}`, ...(body !== undefined && { "content-type": "application/json" }) },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (res.ok) return await res.text();
       } catch {
         if (++tries >= maxTries) throw new GoogleError("network", undefined, where);
@@ -126,25 +162,42 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
   }
 
   /** Parses a 200 body; one that is not the expected envelope is an error, never "no data". */
-  function readPage(body: string, where: string): { points: unknown[]; next?: string } {
+  function readPage(body: string, key: "dataPoints" | "rollupDataPoints", where: string): { points: unknown[]; next?: string } {
     const j = parseJson(body);
     if (typeof j !== "object" || j === null) throw new GoogleError("bad_response", 200, where);
-    const { dataPoints: pts = [], nextPageToken: next } = j as Record<string, unknown>;
+    const { [key]: pts = [], nextPageToken: next } = j as Record<string, unknown>;
     if (!Array.isArray(pts)) throw new GoogleError("bad_response", 200, where);
     return { points: pts, next: typeof next === "string" && next ? next : undefined };
   }
 
   return {
     /** Every data point of `type` in [start, end) (one window of at most `maxDays`), one page at a time to `onPage`. */
-    async listEach(type: DataTypeId, w: TimeWindow, onPage: (points: unknown[]) => void): Promise<void> {
+    async listEach(type: DataTypeId, w: TimeWindow, tz: string, onPage: (points: unknown[]) => void): Promise<void> {
       const t = DATA_TYPES[type];
-      const filter = buildFilter(type, w);
+      const filter = buildFilter(type, w, tz);
       let pageToken: string | undefined;
       let pages = 0;
       do {
         if (++pages > MAX_PAGES) throw new GoogleError("too_many_pages", undefined, type);
         const q = new URLSearchParams({ filter, pageSize: String(t.pageSize), ...(pageToken && { pageToken }) });
-        const page = readPage(await request(`${API}/${type}/dataPoints?${q}`, type), type);
+        const page = readPage(await request(`${API}/${type}/dataPoints?${q}`, type), "dataPoints", type);
+        onPage(page.points);
+        pageToken = page.next;
+      } while (pageToken);
+    },
+    /**
+     * `type`'s daily roll-up over the window's local days (one point a day, at most `maxDays`): what the API has
+     * for the day's personal range. The window's edges must be local midnights, as sync's windows are.
+     */
+    async rollupEach(type: RollupTypeId, w: TimeWindow, tz: string, onPage: (points: unknown[]) => void): Promise<void> {
+      const where = `${type} dailyRollUp`;
+      const range = { start: civilDate(localDay(w.start, tz)), end: civilDate(localDay(ceilMidnight(w.end, tz), tz)) };
+      let pageToken: string | undefined;
+      let pages = 0;
+      do {
+        if (++pages > MAX_PAGES) throw new GoogleError("too_many_pages", undefined, where);
+        const body = JSON.stringify({ range, pageSize: DATA_TYPES[type].pageSize, ...(pageToken && { pageToken }) });
+        const page = readPage(await request(`${API}/${type}/dataPoints:dailyRollUp`, where, body), "rollupDataPoints", where);
         onPage(page.points);
         pageToken = page.next;
       } while (pageToken);

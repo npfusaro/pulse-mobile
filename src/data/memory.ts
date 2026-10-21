@@ -2,7 +2,8 @@
 // restart. Rows are copied on the way in and out (JSON round-trip), so callers never share objects with the
 // store, as they would not with SQLite.
 import type { DayRange, JournalTagChange, JournalTagRow, LoggedEntryRow, ReportRow, ScoreRow, SeriesKind, Store } from "./store";
-import type { DailyValue, Exercise, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
+import { mergeGoogleDaily, mergeGoogleRows } from "./googleDaily";
+import type { DailyValue, Exercise, GoogleDaily, HealthRecord, HrSample, HrvSample, JournalEntry, Metrics, Profile, Segment, Session, Spo2Sample, StepsMinute, SyncState } from "./types";
 import type { ActivityCostResult } from "@/core/algorithms/activityCost";
 
 const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -68,6 +69,7 @@ export class MemoryStore implements Store {
   private steps = new Samples();
   private hrv = new Samples();
   private spo2 = new Samples();
+  private google = new Map<string, GoogleDaily>();
   private values = new Map<string, DailyValue>();
   private journal = new Map<string, JournalEntry>();
   private dirty = new Set<string>();
@@ -124,6 +126,12 @@ export class MemoryStore implements Store {
   async clearSpo2() {
     this.spo2.clear();
   }
+  async upsertGoogleDaily(rows: GoogleDaily[]) {
+    mergeGoogleRows(this.google, rows);
+  }
+  async clearGoogleDaily() {
+    this.google.clear();
+  }
   async putSteps(minutes: StepsMinute[]) {
     this.steps.put(minutes);
   }
@@ -175,7 +183,7 @@ export class MemoryStore implements Store {
   }
 
   async allMetrics() {
-    return copy([...this.metrics.values()]);
+    return copy(mergeGoogleDaily([...this.metrics.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)), [...this.google.values()]));
   }
   async allSessions() {
     return copy([...this.sessions.values()]);
@@ -324,6 +332,7 @@ export class MemoryStore implements Store {
     this.steps.clear();
     this.hrv.clear();
     this.spo2.clear();
+    this.google.clear();
     this.dirty.clear();
   }
 }
