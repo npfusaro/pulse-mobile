@@ -137,6 +137,23 @@ Health Connect app: Data and access › Heart rate › earliest entry). The Goog
 Raising it re-reads Health Connect's whole window and walks the Google import from the new start; lowering it
 removes nothing.
 
+## Probing the live API
+
+The reference and the live API disagree in places (the personal-range roll-ups above). `scripts/google-probe.mjs`
+asks the API, with your own consent, what it actually serves your account, and writes a report of statuses,
+Google's error wording, response shapes (keys and value types), counts and sample spacing — never a reading — that
+is safe to share with whoever is debugging. It needs a **Desktop app** OAuth client in the same Cloud project
+(Clients › Create client › Desktop app; the consent lands on `127.0.0.1`, which a Desktop client allows without
+registering a redirect). The client id and secret are read from the environment and never leave the machine:
+
+```powershell
+$env:GOOGLE_CLIENT_ID = "…apps.googleusercontent.com"; $env:GOOGLE_CLIENT_SECRET = "…"
+node scripts/google-probe.mjs google-probe-report.json
+```
+
+A browser tab asks for the read scopes (edit `GOOGLE_SCOPES` to narrow them); the terminal then prints one line per
+request. The scopes asked for must be on the consent screen's Data access list.
+
 ## When it doesn't connect
 
 | Toast | Cause |
