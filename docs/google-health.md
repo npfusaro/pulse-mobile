@@ -62,6 +62,20 @@ path (`C:\pm`); build one architecture (`$env:ORG_GRADLE_PROJECT_reactNativeArch
 run Gradle directly when the device picker gets in the way: `npx expo prebuild --platform android`, then
 `android\gradlew.bat app:assembleRelease` and `adb install -r` the APK.
 
+### Or let GitHub build it
+
+`.github/workflows/apk.yml` builds the same arm64 release APK on GitHub's runners, signed with the same debug
+keystore, so the SHA-1 registered with Google stays valid and the download installs over a local build. Every push
+to the fork's branch (and **Actions › APK › Run workflow**) leaves the APK as a workflow artifact; pushing a tag
+publishes a Release with the APK attached, which a phone's browser can download straight into the installer:
+
+```sh
+git tag v0.1.0-google && git push origin v0.1.0-google
+```
+
+A fork starts with Actions switched off: open the fork's **Actions** tab once and enable workflows. The build takes
+about 15–25 minutes (the native modules compile from source every time; the Gradle cache shortens the rest).
+
 If the upstream release of Pulse Mobile is installed, uninstall it first: it has the same package name
 (`in.portlabs.pulse`) under a different signing key, and Android refuses to install over it. The import rebuilds the
 local data from Health Connect in a few minutes.

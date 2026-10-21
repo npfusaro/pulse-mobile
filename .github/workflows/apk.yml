@@ -1,0 +1,77 @@
+# Builds the arm64 release APK on GitHub's runners (fork addition), so nobody needs an Android toolchain on a laptop.
+# Every push to the fork's branch and every manual run leaves the APK as a workflow artifact; a `v*` tag also
+# publishes it as a GitHub Release, which a phone's browser can download straight into the installer.
+#
+# The APK is signed with the debug keystore Expo generates into android/app (the stock React Native one, the same on
+# every machine), which is the key registered with Google for the Google Health API (docs/google-health.md). So a
+# build from here installs over a local `expo run:android` build, and the other way round, and Google keeps
+# recognising it. The job prints the key's SHA-1 so a mismatch is visible in the log.
+name: APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/google-health-spo2]
+    tags: ["v*"]
+
+# `contents: write` only for `gh release create` on a tag; the build itself reads nothing but the checkout.
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: arm64 release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Only the architecture phones have: three fewer native builds, a third of the APK.
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: pnpm install --frozen-lockfile
+      # Continuous native generation: android/ is never committed, so it is generated here from app.json and the
+      # config plugins, exactly as `expo run:android` does locally.
+      - run: npx expo prebuild --platform android --no-install
+      - name: signing key
+        run: keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1|SHA256"
+      - name: build
+        working-directory: android
+        run: ./gradlew app:assembleRelease --no-daemon -Dorg.gradle.jvmargs=-Xmx4g
+      - name: name the file
+        id: apk
+        run: |
+          version=$(node -p "require('./app.json').expo.version")
+          sha=$(git rev-parse --short HEAD)
+          name="pulse-mobile-${version}-${sha}-arm64.apk"
+          mv android/app/build/outputs/apk/release/app-release.apk "$name"
+          ls -l "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+          if-no-files-found: error
+          retention-days: 30
+      # A tag gets a Release with the APK attached: the link a phone can open. `gh` is on every runner.
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" "${{ steps.apk.outputs.name }}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes "arm64 release APK, signed with the project's debug keystore (see docs/google-health.md)."
