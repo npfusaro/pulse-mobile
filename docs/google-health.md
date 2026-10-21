@@ -3,7 +3,9 @@
 This fork adds a second source beside Health Connect: the Google Health API, for what Health Connect never gets from
 Fitbit. First the band's **minute-by-minute blood oxygen (SpO2)**: Fitbit's own app shows a nightly average; Google's
 cloud keeps every minute the band read (you can see them in a Google Takeout), and the API serves them as the
-`oxygen-saturation` sample type. Then, per night, Fitbit's **deep-sleep RMSSD** and its **personal ranges** for HRV
+`oxygen-saturation` sample type. Then, per night, Fitbit's **nightly SpO2 average** (`daily-oxygen-saturation`, the "Daily SpO2" of a Takeout:
+what the Blood oxygen metric page's history and the Health Monitor's SpO2 row run on, since Health Connect has no
+nightly value either), its **deep-sleep RMSSD** and its **personal ranges** for HRV
 and resting heart rate (`daily-heart-rate-variability`, and `:dailyRollUp` on the roll-up-only identifiers
 `heart-rate-variability-personal-range` and `resting-heart-rate-personal-range`; the daily types themselves answer
 "DailyRollup is not supported"). Should Google refuse the range roll-ups for an account, the sync remembers the
@@ -19,7 +21,7 @@ flowchart LR
   B[Fitbit band / Pixel Watch] --> G[Google Health app]
   G --> HC[Health Connect] --> P[Pulse: everything else, incl. 5-minute HRV]
   G --> C[Google cloud] -- oxygen-saturation --> P2[Pulse: spo2_days]
-  C -- daily HRV, personal ranges --> P3[Pulse: google_daily]
+  C -- daily SpO2, daily HRV, personal ranges --> P3[Pulse: google_daily]
   P2 --> S[/health/blood-oxygen]
   P3 --> S2[/health/night-hrv and the Health Monitor]
 ```
@@ -124,6 +126,15 @@ serves one), the average with where it sits in that range, the deep-sleep RMSSD,
 The **Health Monitor** would judge HRV and resting heart rate against Fitbit's ranges if Google served them; as of
 October 2026 it refuses the personal-range roll-ups on every identifier tried, Settings says so, and Pulse's own
 ranges stay.
+
+The Blood oxygen screen's **Dips** card tells the two kinds of low minute apart (`src/core/algorithms/spo2Dips.ts`):
+every fall of 3% or more under the previous ten minutes' median is a dip, and the heart rate decides what it was. A
+rise of 5 bpm or more (the highest two-minute mean from the nadir to three minutes past the dip's end, against the
+five minutes before) is **Breathing**: the arousal that follows a real desaturation. No rise is **Arm**: the sensor
+starved of blood by the arm being slept on, the likelier reading of a flat-hearted dip. Unreadable minutes (runs of
+two or more the band threw away) are counted beside them, since a crushed arm causes those too. The chart rings
+each dip's nadir in the warning colour when the heart answered, muted when not; the week table carries both counts.
+A count, not a diagnosis.
 
 **Zoom** on either night card opens the chart explorer on that night (`/chart?metric=spo2&r=day` or `metric=hrv`):
 pinch to zoom, drag to pan, hold to inspect, with the night's heart rate beside the series on its own axis and the

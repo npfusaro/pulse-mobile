@@ -14,7 +14,7 @@ import { MetricState } from "../shells/MetricState";
 import { useOptionalShellCalendar } from "../shells/ShellStatus";
 import { Skeleton } from "../Skeleton";
 import { useTheme } from "../theme";
-import { ChartFigure, ChartLabel, DashedLine, GlowDot, GridLines, Pill, PlotCanvas, ScrubLayer, ScrubTick, TooltipCard, TooltipLine, xTickY, yTickX } from "./ChartFrame";
+import { ChartFigure, ChartLabel, DashedLine, GlowDot, GridLines, HollowDot, Pill, PlotCanvas, ScrubLayer, ScrubTick, TooltipCard, TooltipLine, xTickY, yTickX } from "./ChartFrame";
 import { areaPath, linePath, linearScale, nearestIndex } from "./geometry";
 import { FadeFill, StrokePath } from "./paint";
 
@@ -28,6 +28,8 @@ export type NightSpo2Series = {
   low?: { t: number; v: number } | null;
   /** Per-minute heart rate on the same grid, for the right-hand axis; null or absent draws no heart rate. */
   hr?: { t: number; v: number | null }[] | null;
+  /** The night's dips, each marked at its nadir: a ring in the warning colour when the heart answered, muted when not. */
+  dips?: { nadir: { t: number; v: number }; hr: "answered" | "flat" | "unknown" }[];
 };
 
 export type NightSpo2ChartProps = { data: Metric<NightSpo2Series> | null | undefined };
@@ -64,6 +66,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
   const tz = useOptionalShellCalendar()?.timeZone;
   const [x, setX] = useState<number | null>(null);
   const { bed, wake, points, low } = s;
+  const dips = s.dips ?? [];
   const hr = s.hr?.length ? s.hr : null;
   const hrByT = useMemo(() => new Map((hr ?? []).map((p) => [p.t, p.v])), [hr]);
   const hrAxis = hrTicks((hr ?? []).map((p) => p.v));
@@ -119,6 +122,10 @@ function Chart({ s }: { s: NightSpo2Series }) {
               <FadeFill path={areaPath(mk("night"), y1, "monotone")} color={c.sleep} y0={nightTop} y1={y1} from={0.28} to={0} />
               <StrokePath path={linePath(mk("night"), "monotone")} width={1.5} paint={{ color: c.sleep }} />
               {rows.map((r) => r.lone && r.v !== null && <Circle key={r.t} cx={tx(r.t)} cy={y(r.v)} r={1.75} color={r.night === null ? c["muted-foreground"] : c.sleep} />)}
+              {/* Each dip's nadir: a hollow ring, warning-coloured when the heart answered (breathing), muted when it stayed flat (the arm). */}
+              {dips.map((d) => (
+                <HollowDot key={d.nadir.t} x={tx(d.nadir.t)} y={y(d.nadir.v)} r={4} stroke={d.hr === "answered" ? c.warning : c["muted-foreground"]} strokeWidth={1.5} opacity={d.hr === "unknown" ? 0.5 : 1} />
+              ))}
               {low && (
                 <>
                   <Circle cx={tx(low.t)} cy={y(low.v)} r={5.5} color={c.card} />

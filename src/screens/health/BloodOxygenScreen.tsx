@@ -28,8 +28,7 @@ import { BLOOD_OXYGEN_INFO } from "./info";
 
 const HREF = "/health/blood-oxygen";
 const GOOGLE_SETTINGS = "/settings?s=source";
-/** Nearly every night dips under 95% for a minute, so only a low under 90% or half an hour under 95% is toned. */
-const LOW_NOTABLE = 90;
+/** Nearly every night dips under 95% for a minute, so only half an hour under 95% is toned in the week. */
 const UNDER_NOTABLE_MIN = 30;
 
 /** The night's average over its low, its minutes under 95% and how many minutes the band read. */
@@ -83,6 +82,47 @@ function Hero({ vm }: { vm: BloodOxygenVM }) {
   );
 }
 
+/** The night's dips told apart by the heart's answer: the number that says whether the low minutes were breathing or the arm. */
+function Dips({ vm }: { vm: BloodOxygenVM }) {
+  const n = vm.night.value;
+  if (!n) return <Text className={CAPTION}>No readings on this night.</Text>;
+  const d = n.dipSummary;
+  const noHr = n.hr === null;
+  const stats = [
+    { label: "Breathing", value: noHr ? MISSING : String(d.answered), spoken: noHr ? "unknown, no heart rate" : `${d.answered} dips the heart rate answered`, tone: d.answered > 0 ? "text-warning-text" : "" },
+    { label: "Arm", value: noHr ? MISSING : String(d.flat), spoken: noHr ? "unknown, no heart rate" : `${d.flat} dips with the heart rate flat`, tone: "" },
+    { label: "Unreadable", value: String(d.gapMin), unit: "min", spoken: `${d.gapMin} minutes the band could not read`, tone: "" },
+  ];
+  const line =
+    d.dips === 0
+      ? "No dips of 3% or more this night."
+      : noHr
+        ? `${d.dips} ${d.dips === 1 ? "dip" : "dips"} of 3% or more; no heart rate this night to tell what they were.`
+        : d.answered === 0
+          ? `${d.dips} ${d.dips === 1 ? "dip" : "dips"} of 3% or more, none answered by your heart rate: the arm the band is on, most likely, not your breathing.`
+          : d.flat === 0 && d.unknown === 0
+            ? `${d.dips} ${d.dips === 1 ? "dip" : "dips"} of 3% or more, every one answered by a heart-rate rise: breathing events, not the arm.`
+            : `${d.dips} dips of 3% or more: ${d.answered} answered by a heart-rate rise (breathing), ${d.flat} with the heart rate flat (the arm, most likely)${d.unknown ? `, ${d.unknown} with no heart rate to say` : ""}.`;
+  return (
+    <View className="gap-3">
+      <Text className="text-[15px] leading-[22px]">{line}</Text>
+      <View className="flex-row gap-3">
+        {stats.map((s) => (
+          <View key={s.label} accessible accessibilityLabel={`${s.label}: ${s.spoken}`} className="flex-1 items-center">
+            <Text accessibilityElementsHidden className={cn("font-numeric text-xl font-bold leading-6 tabular-nums", s.tone)}>
+              {s.value}
+              {s.unit && <Text className="text-sm font-semibold text-foreground-secondary"> {s.unit}</Text>}
+            </Text>
+            <Text accessibilityElementsHidden className={cn(LABEL, "mt-1 text-muted-foreground")}>
+              {s.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 const CELL = "font-numeric text-[15px] font-bold leading-5 tabular-nums";
 const HEAD = cn(LABEL, "text-[10px] leading-3 text-muted-foreground");
 
@@ -92,27 +132,28 @@ function Week({ vm, today }: { vm: BloodOxygenVM; today: string }) {
     <View>
       <View className="flex-row items-end pb-2">
         <Text className={cn(HEAD, "flex-1")}>Night</Text>
-        <Text className={cn(HEAD, "w-16 text-right")}>Average</Text>
-        <Text className={cn(HEAD, "w-14 text-right")}>Low</Text>
-        <Text className={cn(HEAD, "w-20 text-right")}>Under 95%</Text>
+        <Text className={cn(HEAD, "w-14 text-right")}>Avg</Text>
+        <Text className={cn(HEAD, "w-16 text-right")}>Under 95%</Text>
+        <Text className={cn(HEAD, "w-16 text-right")}>Breathing</Text>
+        <Text className={cn(HEAD, "w-10 text-right")}>Arm</Text>
         <View className="w-6" />
       </View>
       {vm.nights.map((n) => {
         const current = n.day === vm.day;
-        const lowTone = n.low !== null && n.low < LOW_NOTABLE;
         const underTone = n.below95Min !== null && n.below95Min >= UNDER_NOTABLE_MIN;
         return (
           <Press
             key={n.day}
             accessibilityRole="link"
-            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}, low ${n.low ?? "none"}, ${n.below95Min ?? 0} minutes under 95 percent`}
+            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}, low ${n.low ?? "none"}, ${n.below95Min ?? 0} minutes under 95 percent, ${n.answered ?? 0} dips the heart rate answered, ${n.flat ?? 0} with it flat`}
             onPress={() => push(dayHref(HREF, n.day, today))}
             className="flex-row items-center border-t border-border py-2.5"
           >
             <Text className={cn("flex-1 text-[15px] leading-5", current ? "font-bold" : "font-medium text-foreground-secondary")}>{n.day === today ? "Last night" : formatDay(n.day, DAY.short)}</Text>
-            <Text className={cn(CELL, "w-16 text-right")}>{n.average !== null ? `${n.average.toFixed(1)}%` : MISSING}</Text>
-            <Text className={cn(CELL, "w-14 text-right", lowTone && "text-warning-text")}>{n.low !== null ? `${n.low}%` : MISSING}</Text>
-            <Text className={cn(CELL, "w-20 text-right", underTone ? "text-warning-text" : "text-foreground-secondary")}>{n.below95Min !== null ? `${n.below95Min} min` : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right")}>{n.average !== null ? `${n.average.toFixed(1)}` : MISSING}</Text>
+            <Text className={cn(CELL, "w-16 text-right", underTone ? "text-warning-text" : "text-foreground-secondary")}>{n.below95Min !== null ? `${n.below95Min} min` : MISSING}</Text>
+            <Text className={cn(CELL, "w-16 text-right", n.answered ? "text-warning-text" : "text-foreground-secondary")}>{n.answered !== null ? String(n.answered) : MISSING}</Text>
+            <Text className={cn(CELL, "w-10 text-right text-foreground-secondary")}>{n.flat !== null ? String(n.flat) : MISSING}</Text>
             <View className="w-6 items-end">
               <Icon icon={ChevronRight} size={16} tone="muted-foreground" strokeWidth={2} />
             </View>
@@ -126,7 +167,10 @@ function Week({ vm, today }: { vm: BloodOxygenVM; today: string }) {
 export function BloodOxygenScreen() {
   const { data, error, reload } = useDayScreen("bloodOxygen", getBloodOxygen);
   const vm = data?.vm;
-  const series = useMemo(() => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low, hr: vm.night.value.hr }, reason: null, provisional: false } : vm.night), [vm]);
+  const series = useMemo(
+    () => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low, hr: vm.night.value.hr, dips: vm.night.value.dips }, reason: null, provisional: false } : vm.night),
+    [vm],
+  );
   if (!data || !vm || !series) return error ? <ErrorView detail retry={reload} /> : <BloodOxygenLoading />;
   const { d, today } = data;
   const nightTitle = vm.isToday ? "Last night" : dayLabel(d, today);
@@ -157,7 +201,18 @@ export function BloodOxygenScreen() {
       secondary={
         vm.connected
           ? [
-              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average, its lowest minute and how many minutes sat under 95%. Tap a night to see it." }}>
+              <SectionShell
+                key="dips"
+                variant="card"
+                title="Dips"
+                info={{
+                  title: "Breathing or the arm",
+                  body: "A dip is a fall of 3% or more under the previous ten minutes. The heart gives it away: when the airway narrows, the heart rate jumps within a minute or two of the low as you rouse (counted as Breathing); when the arm the band is on is slept on, the sensor loses blood flow, reads low, and the heart rate stays flat (counted as Arm). Unreadable minutes are stretches of two or more the band threw away, which a crushed arm also causes. A count, not a diagnosis: nights with many answered dips are worth a conversation with a doctor.",
+                }}
+              >
+                <Dips vm={vm} />
+              </SectionShell>,
+              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average, how many minutes sat under 95%, and its dips split by the heart’s answer: Breathing (the heart rate rose) and Arm (it stayed flat). Tap a night to see it." }}>
                 <Week vm={vm} today={today} />
               </SectionShell>,
             ]
@@ -174,6 +229,19 @@ const LOADING_PRIMARY = (
 );
 
 const LOADING_SECONDARY = [
+  <SectionShell key="dips" variant="card" title="Dips">
+    <View accessibilityElementsHidden className="gap-3">
+      <SkeletonText className="w-full" />
+      <View className="flex-row gap-3">
+        {["Breathing", "Arm", "Unreadable"].map((w) => (
+          <View key={w} className="flex-1 items-center">
+            <SkeletonText lh={24} fs={20} className="w-[42px]" />
+            <Text className={cn(LABEL, "mt-1 text-muted-foreground")}>{w}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  </SectionShell>,
   <SectionShell key="week" variant="card" title="This week">
     <View>
       {Array.from({ length: 7 }, (_, i) => (

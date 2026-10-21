@@ -109,7 +109,7 @@ describe("getNightHrv", () => {
     await runPipeline(bare, PROFILE, { today: TODAY });
     const m = (await bare.allMetrics()).find((r) => r.day === TODAY)!;
     await bare.upsertMetrics([{ ...m, hrvDeepMs: null, hrvRangeLow: null, hrvRangeHigh: null }]);
-    await bare.upsertGoogleDaily([{ day: TODAY, hrvMs: 99, hrvDeepMs: 61.5, hrvRangeLow: 30, hrvRangeHigh: 50, rhrRangeLow: null, rhrRangeHigh: null }]);
+    await bare.upsertGoogleDaily([{ day: TODAY, spo2Pct: null, hrvMs: 99, hrvDeepMs: 61.5, hrvRangeLow: 30, hrvRangeHigh: 50, rhrRangeLow: null, rhrRangeHigh: null }]);
     const vm = await getNightHrv(TODAY, { ...ctx, store: bare });
     expect(vm.average.value).toBe(m.hrvMs); // Health Connect's nightly value stands
     expect(vm.deep).toBe(61.5);

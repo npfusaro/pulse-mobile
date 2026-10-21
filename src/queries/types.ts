@@ -2,6 +2,7 @@
 // src/server/queries/types.ts so the ported UI consumes them unchanged.
 // Conventions: instants are epoch **milliseconds** (as the charts and cards take them), days are
 // local `YYYY-MM-DD`, Strain is a percent (0–100 on most days, above 100 on a very big one), and no number is ever NaN or ±Infinity.
+import type { Spo2Dip, Spo2DipSummary } from "@/core/algorithms/spo2Dips";
 import type { ChipTone, DashboardKey, FormatKey, GoodDirection, RecoveryBand as Band, StressLevel } from "./_lib";
 import type { Metric, MetricTag, ReasonCode } from "@/lib/reasons";
 import type { EnergyBand } from "@/core/engine/energyBank";
@@ -429,12 +430,18 @@ export type BloodOxygenVM = {
   connected: boolean;
   /** The night's average: Fitbit's nightly value when Health Connect has one, else the readings' own mean. */
   average: Metric<number>;
-  /** The lowest minute, the minutes read, and how many sat under 95%. */
-  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number }>;
+  /**
+   * The lowest minute, the minutes read, how many sat under 95%, and the night's dips of 3% or more, each with the
+   * heart's answer (src/core/algorithms/spo2Dips.ts), plus the minutes the band could not read.
+   */
+  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary }>;
   /** Where the average stands against 95–100, the range Fitbit and the Health Monitor use; null without an average. */
   chip: { tone: ChipTone; text: string } | null;
-  /** The seven nights ending on `day`, oldest first; nulls where the band read nothing. */
-  nights: { day: string; average: number | null; low: number | null; below95Min: number | null }[];
+  /**
+   * The seven nights ending on `day`, oldest first; nulls where the band read nothing. `answered` and `flat`: the
+   * night's dips the heart rate answered (breathing) and ignored (the arm, most likely).
+   */
+  nights: { day: string; average: number | null; low: number | null; below95Min: number | null; answered: number | null; flat: number | null }[];
 };
 
 export type MonitorVM = {

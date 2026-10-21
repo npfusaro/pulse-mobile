@@ -59,7 +59,17 @@ describe("getBloodOxygen", () => {
     expect(night.hr!.map((p) => p.t)).toEqual(night.points.map((p) => p.t));
     expect(night.hr!.filter((p) => p.v !== null).length).toBeGreaterThan(night.points.length / 2);
     expect(vm.nights.map((n) => n.day)).toEqual(Array.from({ length: 7 }, (_, k) => addDays(TODAY, k - 6)));
-    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min });
+    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min, answered: night.dipSummary.answered, flat: night.dipSummary.flat });
+    // The night's dips, each judged by the heart (the seed carries heart rate, so none is unknown), in time order.
+    expect(night.dipSummary.dips).toBe(night.dips.length);
+    expect(night.dipSummary.answered + night.dipSummary.flat + night.dipSummary.unknown).toBe(night.dips.length);
+    expect(night.dipSummary.unknown).toBe(0);
+    for (const d of night.dips) {
+      expect(d.drop).toBeGreaterThanOrEqual(3);
+      expect(d.nadir.t).toBeGreaterThanOrEqual(night.bed);
+      expect(d.nadir.t).toBeLessThan(night.wake);
+    }
+    expect(night.dipSummary.gapMin).toBeGreaterThan(0);
   });
 
   it("the illness peak reads lower than a healthy night, with minutes under 95%", async () => {
@@ -74,7 +84,7 @@ describe("getBloodOxygen", () => {
     const off = await getBloodOxygen(dayAt(SCENARIO.bandOff.day + 1), ctx);
     expect(off.average).toMatchObject({ value: null, reason: "band_not_worn" });
     expect(off.night).toMatchObject({ value: null, reason: "band_not_worn" });
-    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null });
+    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null, answered: null, flat: null });
     // The night's reason needs the scored night (DayRow.sleep.main), so the bare store is scored too.
     const bare = new MemoryStore();
     await seedDemo(bare, { today: TODAY, timeZone: TZ, now: NOW });
