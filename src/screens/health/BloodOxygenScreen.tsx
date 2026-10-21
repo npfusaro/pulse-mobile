@@ -125,7 +125,7 @@ function Week({ vm, today }: { vm: BloodOxygenVM; today: string }) {
 export function BloodOxygenScreen() {
   const { data, error, reload } = useDayScreen("bloodOxygen", getBloodOxygen);
   const vm = data?.vm;
-  const series = useMemo(() => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low }, reason: null, provisional: false } : vm.night), [vm]);
+  const series = useMemo(() => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low, hr: vm.night.value.hr }, reason: null, provisional: false } : vm.night), [vm]);
   if (!data || !vm || !series) return error ? <ErrorView detail retry={reload} /> : <BloodOxygenLoading />;
   const { d, today } = data;
   const nightTitle = vm.isToday ? "Last night" : dayLabel(d, today);
@@ -140,7 +140,7 @@ export function BloodOxygenScreen() {
         <SectionShell
           variant="card"
           title={nightTitle}
-          info={{ title: "Blood oxygen through the night", body: "Each minute the band could read, from bedtime to waking. A gap is a minute it could not read, usually movement. The dashed line marks 95%, under which readings count as low." }}
+          info={{ title: "Blood oxygen through the night", body: "Each minute the band could read, from bedtime to waking, with your heart rate on the right-hand axis. A gap is a minute the band could not read: movement, or the arm it is on being slept on. A dip your heart rate answers with a jump a minute or two later is a breathing event; a dip or a gap it ignores is almost always the arm, not the lungs. The dashed line marks 95%, under which readings count as low." }}
         >
           {vm.connected ? (
             <NightSpo2Chart data={series} />

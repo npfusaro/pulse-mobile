@@ -414,8 +414,12 @@ export type HealthspanVM = {
   contributors: HealthspanContributor[];
 };
 
-/** The band's minute-by-minute blood oxygen across one main sleep (`t` epoch ms; a null minute is a gap). */
-export type NightSpo2 = { bed: number; wake: number; points: TimePoint[] };
+/**
+ * The band's minute-by-minute blood oxygen across one main sleep (`t` epoch ms; a null minute is a gap), with the
+ * night's per-minute heart rate on the same grid (null when the night's heart rate is too thin to draw): a dip the
+ * heart answers is a breathing event, a dip or a gap it ignores is the arm, not the lungs.
+ */
+export type NightSpo2 = { bed: number; wake: number; points: TimePoint[]; hr: TimePoint[] | null };
 
 /** Blood oxygen `/health/blood-oxygen?d=` (fork): the night ending on `day`, from the Google source. */
 export type BloodOxygenVM = {

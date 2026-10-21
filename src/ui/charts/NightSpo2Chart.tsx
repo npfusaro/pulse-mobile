@@ -1,6 +1,8 @@
 // Blood oxygen across the main sleep (fork addition), after SleepHrChart: the band's one-a-minute readings with
 // gaps where it could not read, the bed and wake markers, the 95% line Fitbit and the Health Monitor judge by, and
-// the night's low marked. A reading with no neighbour draws no line, so it gets a dot of its own.
+// the night's low marked. A reading with no neighbour draws no line, so it gets a dot of its own. The night's heart
+// rate rides along on a right-hand axis: a dip the heart answers with a jump is a breathing event; a dip, or a gap,
+// with the heart rate flat is the band's arm being slept on.
 import { useMemo, useState } from "react";
 import { View } from "react-native";
 import { Circle } from "@shopify/react-native-skia";
@@ -24,6 +26,8 @@ export type NightSpo2Series = {
   points: { t: number; v: number | null }[];
   /** The night's lowest minute, marked. */
   low?: { t: number; v: number } | null;
+  /** Per-minute heart rate on the same grid, for the right-hand axis; null or absent draws no heart rate. */
+  hr?: { t: number; v: number | null }[] | null;
 };
 
 export type NightSpo2ChartProps = { data: Metric<NightSpo2Series> | null | undefined };
@@ -46,11 +50,23 @@ export function spo2Ticks(values: (number | null)[]): number[] {
   return Array.from({ length: Math.floor((100 - first) / step) + 1 }, (_, i) => first + i * step);
 }
 
+/** Heart-rate ticks for the right axis: 20 bpm steps around the night's range, as the Sleep page's chart. */
+function hrTicks(values: (number | null)[]): number[] {
+  const v = values.filter((x): x is number => x !== null);
+  if (!v.length) return [];
+  const lo = Math.floor((Math.min(...v) - 5) / 20) * 20;
+  const hi = Math.ceil((Math.max(...v) + 5) / 20) * 20;
+  return Array.from({ length: (hi - lo) / 20 + 1 }, (_, i) => lo + i * 20);
+}
+
 function Chart({ s }: { s: NightSpo2Series }) {
   const { c } = useTheme();
   const tz = useOptionalShellCalendar()?.timeZone;
   const [x, setX] = useState<number | null>(null);
   const { bed, wake, points, low } = s;
+  const hr = s.hr?.length ? s.hr : null;
+  const hrByT = useMemo(() => new Map((hr ?? []).map((p) => [p.t, p.v])), [hr]);
+  const hrAxis = hrTicks((hr ?? []).map((p) => p.v));
   // Two series on one axis: the readings in bed (lit, filled) and the odd one outside it (faint). `lone`: no reading
   // on either side, so the point gets a dot where the line cannot reach it.
   const rows = useMemo(
@@ -65,27 +81,33 @@ function Chart({ s }: { s: NightSpo2Series }) {
   const yTicks = spo2Ticks(points.map((p) => p.v));
   const night = points.filter((p) => p.t >= bed && p.t < wake && p.v !== null).map((p) => p.v!);
   const avg = night.length ? Math.round((night.reduce((a, b) => a + b, 0) / night.length) * 10) / 10 : null;
-  const summary = `Blood oxygen during sleep from ${clock(bed, tz)} to ${clock(wake, tz)}: low ${Math.min(...night)}, average ${avg}, high ${Math.max(...night)} percent, ${night.length} readings.`;
+  const hrNight = (hr ?? []).filter((p) => p.t >= bed && p.t < wake && p.v !== null).map((p) => p.v!);
+  const summary = `Blood oxygen during sleep from ${clock(bed, tz)} to ${clock(wake, tz)}: low ${Math.min(...night)}, average ${avg}, high ${Math.max(...night)} percent, ${night.length} readings${hrNight.length ? `; heart rate ${Math.min(...hrNight)} to ${Math.max(...hrNight)} beats per minute` : ""}.`;
   const showLowLine = yTicks[0] < LOW_PCT;
 
   return (
     <ChartFigure summary={summary} height={HEIGHT}>
       {({ width, height }) => {
         const x0 = 32;
-        const x1 = width - 8;
+        const x1 = width - (hrAxis.length ? 30 : 8);
         const y0 = 8;
         const y1 = height - AXIS_H;
         const tx = linearScale([points[0].t, points.at(-1)!.t], [x0, x1]);
         const y = linearScale([yTicks[0], 100], [y1, y0]);
+        const yr = hrAxis.length ? linearScale([hrAxis[0], hrAxis.at(-1)!], [y1, y0]) : null;
         const mk = (key: "out" | "night") => rows.map((r) => ({ x: tx(r.t), y: r[key] === null ? null : y(r[key]!) }));
-        const valid = rows.filter((r) => r.v !== null);
+        const hrPath = yr && hr ? linePath(hr.map((p) => ({ x: tx(p.t), y: p.v === null ? null : yr(p.v) })), "monotone") : null;
+        // Scrub over every minute either series has, so a heart-rate minute inside an SpO2 gap still reads out.
+        const valid = rows.filter((r) => r.v !== null || hrByT.get(r.t) != null);
         const ai = x === null ? -1 : nearestIndex(valid.map((r) => tx(r.t)), x);
         const a = ai >= 0 ? valid[ai] : null;
+        const aHr = a ? (hrByT.get(a.t) ?? null) : null;
         const nightTop = Math.min(...rows.flatMap((r) => (r.night === null ? [] : [y(r.night)])), y1);
         return (
           <>
             <PlotCanvas width={width} height={height}>
               <GridLines ys={yTicks.map(y)} x0={x0} x1={x1} />
+              {hrPath && <StrokePath path={hrPath} width={1} paint={{ color: c.strain }} opacity={0.7} />}
               {/* The 95% line only when the axis reaches under it: a steady night is not drawn against a threshold it never neared. */}
               {showLowLine && <DashedLine x1={x0} x2={x1} y1={y(LOW_PCT)} y2={y(LOW_PCT)} color={c.warning} dash={[4, 4]} />}
               {[bed, wake].map((t) => (
@@ -103,12 +125,19 @@ function Chart({ s }: { s: NightSpo2Series }) {
                 </>
               )}
               {a && a.v !== null && <GlowDot x={tx(a.t)} y={y(a.v)} fill={c.sleep} />}
+              {a && aHr !== null && yr && <Circle cx={tx(a.t)} cy={yr(aHr)} r={3} color={c.strain} />}
             </PlotCanvas>
             {yTicks.map((t) => (
               <ChartLabel key={t} x={yTickX(x0)} y={y(t)} anchor="end" w={x0}>
                 {String(t)}
               </ChartLabel>
             ))}
+            {yr &&
+              hrAxis.map((t) => (
+                <ChartLabel key={`hr-${t}`} x={x1 + 6} y={yr(t)} anchor="start" w={28} color={c["strain-text"]}>
+                  {String(t)}
+                </ChartLabel>
+              ))}
             {showLowLine && (
               <ChartLabel x={x1 - 2} y={y(LOW_PCT) - 9} anchor="end" w={40} color={c["warning-text"]} className="text-[10px] font-bold">
                 95%
@@ -122,9 +151,10 @@ function Chart({ s }: { s: NightSpo2Series }) {
             {low && <Pill x={tx(low.t)} y={y(low.v) + 14} anchor="middle" text={`Low ${low.v}%`} />}
             <ScrubLayer width={width} height={height} onScrub={setX} />
             <ScrubTick index={ai} />
-            {a && a.v !== null && (
+            {a && (a.v !== null || aHr !== null) && (
               <TooltipCard x={tx(a.t)} width={width} title={clock(a.t, tz)}>
-                <TooltipLine color={c.sleep}>{`${a.v.toFixed(1)}%`}</TooltipLine>
+                {a.v !== null && <TooltipLine color={c.sleep}>{`${a.v.toFixed(1)}%`}</TooltipLine>}
+                {aHr !== null && <TooltipLine color={c.strain}>{`${aHr} bpm`}</TooltipLine>}
               </TooltipCard>
             )}
           </>

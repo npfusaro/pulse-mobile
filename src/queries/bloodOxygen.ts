@@ -5,6 +5,7 @@
 import { isGoogleConnected } from "@/google/auth";
 import { addDays } from "@/lib/time";
 import { type DayRow, finite, loadDays, ms, none, ok, type QueryCtx, todayOf, vitalReason } from "./common";
+import { nightHrOf } from "./sleep";
 import type { BloodOxygenVM, HealthHubVM, NightSpo2, TimePoint } from "./types";
 
 /** Readings strictly under this count as low, the way Fitbit and the Health Monitor flag them ("Below 95%"). */
@@ -14,17 +15,18 @@ const PAD_S = 15 * 60;
 /**
  * The band's blood oxygen over the sleep [start, end) (unix seconds) plus 15 minutes each side, on the minute grid;
  * a minute the band did not read is null. The band reads SpO2 once a minute asleep and drops unreliable minutes, so
- * gaps are normal and nothing here judges the count: an empty night is the caller's "no readings".
+ * gaps are normal and nothing here judges the count: an empty night is the caller's "no readings". The night's
+ * per-minute heart rate rides along on the same grid (the Sleep page's series), for the chart to overlay.
  */
 export async function nightSpo2Of(ctx: QueryCtx, start: number, end: number): Promise<NightSpo2 & { samples: { ts: number; pct: number }[] }> {
   const from = Math.floor((start - PAD_S) / 60) * 60;
   const to = end + PAD_S;
-  const samples = await ctx.store.readSpo2(from, to);
+  const [samples, hr] = await Promise.all([ctx.store.readSpo2(from, to), nightHrOf(ctx, start, end)]);
   // One reading a minute; should two land in one, the last wins (as the sync keeps the last of a repeated second).
   const byMin = new Map(samples.map((s) => [Math.floor(s.ts / 60) * 60, s.pct]));
   const points: TimePoint[] = [];
   for (let m = from; m < to; m += 60) points.push({ t: ms(m), v: byMin.get(m) ?? null });
-  return { bed: ms(start), wake: ms(end), points, samples };
+  return { bed: ms(start), wake: ms(end), points, hr: hr.value?.points ?? null, samples };
 }
 
 type NightStats = { readMin: number; mean: number; low: { t: number; v: number }; below95Min: number };
@@ -36,7 +38,7 @@ async function spo2Stats(ctx: QueryCtx, main: { start: number; end: number }): P
   if (!inNight.length) return null;
   const low = inNight.reduce((m, x) => (x.pct < m.pct ? x : m));
   return {
-    night: { bed: night.bed, wake: night.wake, points: night.points },
+    night: { bed: night.bed, wake: night.wake, points: night.points, hr: night.hr },
     readMin: inNight.length,
     mean: Math.round((inNight.reduce((a, x) => a + x.pct, 0) / inNight.length) * 10) / 10,
     low: { t: ms(low.ts), v: low.pct },

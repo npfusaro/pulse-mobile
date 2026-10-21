@@ -53,6 +53,11 @@ describe("getBloodOxygen", () => {
     expect(night.readMin).toBeLessThan((night.wake - night.bed) / 60_000); // gaps: minutes the band could not read
     expect(night.low).toEqual(read.reduce<{ t: number; v: number }>((m, p) => (p.v! < m.v ? { t: p.t, v: p.v! } : m), { t: 0, v: Infinity }));
     expect(night.below95Min).toBe(read.filter((p) => p.v! < 95).length);
+    // The night's heart rate on the same minute grid, for the overlay.
+    expect(night.hr).not.toBeNull();
+    expect(night.hr!.length).toBe(night.points.length);
+    expect(night.hr!.map((p) => p.t)).toEqual(night.points.map((p) => p.t));
+    expect(night.hr!.filter((p) => p.v !== null).length).toBeGreaterThan(night.points.length / 2);
     expect(vm.nights.map((n) => n.day)).toEqual(Array.from({ length: 7 }, (_, k) => addDays(TODAY, k - 6)));
     expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min });
   });
