@@ -41,8 +41,10 @@ export class GoogleError extends Error {
     readonly code: string,
     readonly status: number | undefined,
     readonly where: string,
+    /** Google's own sentence, kept only for a 400: it names the bad request field, never a reading. */
+    readonly detail?: string,
   ) {
-    super(`[google] ${where}: ${code}${status ? ` (HTTP ${status})` : ""}`);
+    super(`[google] ${where}: ${code}${status ? ` (HTTP ${status})` : ""}${detail ? ` — ${detail}` : ""}`);
     this.name = "GoogleError";
   }
 }
@@ -110,6 +112,12 @@ const errorCode = (j: unknown): string | undefined => {
   return e && typeof e.status === "string" && e.status ? e.status : undefined;
 };
 
+/** `error.message` from a 400's body, trimmed: what Google found wrong with the request (a field, a value). */
+const errorDetail = (j: unknown): string | undefined => {
+  const m = (j as { error?: { message?: unknown } } | undefined)?.error?.message;
+  return typeof m === "string" && m ? m.replace(/\s+/g, " ").slice(0, 200) : undefined;
+};
+
 export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxTries = MAX_TRIES }: ClientDeps) {
   let nextSlot = 0;
   async function throttle() {
@@ -157,7 +165,8 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
         await sleep(Math.min(MAX_WAIT_MS, Math.max(0, after ?? BACKOFF_MS * 2 ** (tries - 1))));
         continue;
       }
-      throw new GoogleError(errorCode(parseJson(await res.text())) ?? `http_${status}`, status, where);
+      const j = parseJson(await res.text());
+      throw new GoogleError(errorCode(j) ?? `http_${status}`, status, where, status === 400 ? errorDetail(j) : undefined);
     }
   }
 
@@ -187,20 +196,14 @@ export function createGoogleClient({ token, fetch: fetchFn = fetch, sleep = (ms)
     },
     /**
      * `type`'s daily roll-up over the window's local days (one point a day, at most `maxDays`): what the API has
-     * for the day's personal range. The window's edges must be local midnights, as sync's windows are.
+     * for the day's personal range. The window's edges must be local midnights, as sync's windows are. The body is
+     * the range alone, as the server app sends it: the reference's page fields are not accepted by the live API
+     * (INVALID_ARGUMENT), and a window of days fits one answer anyway.
      */
-    async rollupEach(type: RollupTypeId, w: TimeWindow, tz: string, onPage: (points: unknown[]) => void): Promise<void> {
+    async rollup(type: RollupTypeId, w: TimeWindow, tz: string): Promise<unknown[]> {
       const where = `${type} dailyRollUp`;
       const range = { start: civilDate(localDay(w.start, tz)), end: civilDate(localDay(ceilMidnight(w.end, tz), tz)) };
-      let pageToken: string | undefined;
-      let pages = 0;
-      do {
-        if (++pages > MAX_PAGES) throw new GoogleError("too_many_pages", undefined, where);
-        const body = JSON.stringify({ range, pageSize: DATA_TYPES[type].pageSize, ...(pageToken && { pageToken }) });
-        const page = readPage(await request(`${API}/${type}/dataPoints:dailyRollUp`, where, body), "rollupDataPoints", where);
-        onPage(page.points);
-        pageToken = page.next;
-      } while (pageToken);
+      return readPage(await request(`${API}/${type}/dataPoints:dailyRollUp`, where, JSON.stringify({ range })), "rollupDataPoints", where).points;
     },
   };
 }

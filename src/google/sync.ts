@@ -117,15 +117,26 @@ export async function syncGoogle(store: Store, opts: GoogleSyncOptions): Promise
       from = localMidnight(addDays(localDay(st.syncedThrough!, tz), -OVERLAP_DAYS), tz);
     }
 
+    // The nightly rows ride along with the samples: a window whose nightly requests fail keeps its SpO2 and moves
+    // the cursor on, and the run ends with that failure as its warning (so Settings shows it) but is not aborted.
+    // A broken request for one type must not stall the other; a fix re-walks the window by bumping SYNC_VERSION.
+    let nightsError: unknown;
     const windows = localWindows(from, t, WINDOW_DAYS, tz);
     for (const [i, win] of windows.entries()) {
       progress("google", backfilling ? done : i, backfilling ? total : windows.length);
       samples += await spo2Window(client, store, win, tz);
-      nights += await nightsWindow(client, store, win, tz);
+      const n = await nightsWindow(client, store, win, tz);
+      nights += n.nights;
+      if (n.error) {
+        const e = n.error;
+        if (e instanceof GoogleAuthError || !(e instanceof GoogleError) || e.code === "auth_revoked" || e.code === "network") throw e;
+        nightsError ??= e;
+      }
       if (backfilling) done = Math.min(total, done + daysIn(win, tz));
       await writeGoogleSyncState({ syncedThrough: win.end, ...(backfilling && { backfillDone: done }) });
     }
     await writeGoogleSyncState({ syncedThrough: t, ...(backfilling && { backfillDone: total }), lastSuccessAt: t, lastError: null });
+    if (nightsError) throw nightsError;
   } catch (e) {
     const code = e instanceof GoogleAuthError ? (e.code === "NEEDS_CONSENT" || e.code === "CANCELLED" ? "needs_consent" : e.code.toLowerCase()) : e instanceof GoogleError ? e.code : "internal";
     warnings.push(code === "needs_consent" ? "google_needs_consent" : `google_error:${code}`);
@@ -146,20 +157,34 @@ async function spo2Window(client: GoogleClient, store: Store, win: { start: numb
 
 /**
  * One window's nightly rows: the daily HRV list (average and deep-sleep RMSSD) and the two personal-range roll-ups,
- * merged into google_daily by day. Nothing is deleted: a night Google no longer answers for keeps its last values.
+ * each written as it arrives and merged into google_daily by day, so a request that fails costs only its own rows.
+ * Nothing is deleted: a night Google no longer answers for keeps its last values. Returns the nights touched and
+ * the first failure, for the caller to weigh (a run is not aborted over a nightly request).
  */
-async function nightsWindow(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string): Promise<number> {
-  const rows: GoogleDaily[] = [];
-  const daily: unknown[] = [];
-  await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
-  rows.push(...mapDailyHrv(daily));
-  for (const type of ["daily-heart-rate-variability", "daily-resting-heart-rate"] as const) {
-    const raw: unknown[] = [];
-    await client.rollupEach(type, win, tz, (points) => raw.push(...points));
-    rows.push(...mapPersonalRange(type, raw));
+async function nightsWindow(client: GoogleClient, store: Store, win: { start: number; end: number }, tz: string): Promise<{ nights: number; error?: unknown }> {
+  const days = new Set<string>();
+  let error: unknown;
+  const put = async (rows: GoogleDaily[]) => {
+    if (rows.length) await store.upsertGoogleDaily(rows);
+    for (const r of rows) days.add(r.day);
+  };
+  const jobs = [
+    async () => {
+      const daily: unknown[] = [];
+      await client.listEach("daily-heart-rate-variability", win, tz, (points) => daily.push(...points));
+      await put(mapDailyHrv(daily));
+    },
+    ...(["daily-heart-rate-variability", "daily-resting-heart-rate"] as const).map((type) => async () => put(mapPersonalRange(type, await client.rollup(type, win, tz)))),
+  ];
+  for (const job of jobs) {
+    try {
+      await job();
+    } catch (e) {
+      error ??= e;
+      if (e instanceof GoogleAuthError || !(e instanceof GoogleError) || e.code === "auth_revoked" || e.code === "network") break;
+    }
   }
-  if (rows.length) await store.upsertGoogleDaily(rows);
-  return new Set(rows.map((r) => r.day)).size;
+  return { nights: days.size, error };
 }
 
 /** Local days a window touches. */
