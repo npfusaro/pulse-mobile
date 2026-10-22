@@ -42,6 +42,12 @@ export type TrendMetric = {
   provisional?: (r: DayRow) => boolean;
   /** Accrues through the day (Strain, steps): today is a gap, not a low bar. */
   partialToday?: boolean;
+  /**
+   * A level, not an amount: drawn as a line on a fitted axis in every range, never bars from zero, which flatten a
+   * value that lives in a narrow band of a wide scale (SpO2's 94–98 of 100, a weight's 80 ± 2, a resting HR's 55 ± 5).
+   * Amounts (steps, hours) and scores on a fixed 0–100 keep their bars.
+   */
+  line?: boolean;
 };
 
 /** Where each extra sits in the picker; typed by key, so a new extra metric must pick a section. */
@@ -75,15 +81,15 @@ const CORE: readonly TrendMetric[] = [
   { key: "sleep", group: "Recovery & sleep", label: "Sleep performance", unit: "%", format: "int", colorBy: "sleep", direction: "up", href: "/sleep", column: "sleep_performance_pct", pick: (r) => r.sleep?.performance },
   { key: "hours", group: "Recovery & sleep", label: "Hours of sleep", format: "duration", colorBy: "sleep", direction: "up", href: "/sleep", column: "sleep_minutes", pick: (r) => r.sleep?.main?.asleepMin },
   { key: "consistency", group: "Recovery & sleep", label: "Sleep consistency", unit: "%", format: "int", colorBy: "sleep", direction: "up", href: "/sleep", column: "sleep_consistency_pct", pick: (r) => r.sleep?.consistency },
-  { key: "hrv", group: "Vitals", label: "Heart rate variability", unit: "ms", format: "int", colorBy: "single", direction: "up", href: metricHref("hrv"), column: "hrv_ms", pick: (r) => r.metrics?.hrvMs },
-  { key: "rhr", group: "Vitals", label: "Resting heart rate", unit: "bpm", format: "int", colorBy: "single", direction: "down", href: metricHref("rhr"), column: "resting_hr_bpm", pick: (r) => r.metrics?.rhrBpm },
-  { key: "resp", group: "Vitals", label: "Respiratory rate", unit: "rpm", format: "decimal1", colorBy: "single", direction: "neutral", href: metricHref("resp"), column: "respiratory_rate_rpm", pick: (r) => r.metrics?.respBpm },
-  { key: "spo2", group: "Vitals", label: "Blood oxygen", unit: "%", format: "int", colorBy: "single", direction: "up", href: metricHref("spo2"), column: "spo2_pct", pick: (r) => r.metrics?.spo2Pct },
+  { key: "hrv", group: "Vitals", label: "Heart rate variability", unit: "ms", format: "int", colorBy: "single", direction: "up", href: metricHref("hrv"), column: "hrv_ms", pick: (r) => r.metrics?.hrvMs, line: true },
+  { key: "rhr", group: "Vitals", label: "Resting heart rate", unit: "bpm", format: "int", colorBy: "single", direction: "down", href: metricHref("rhr"), column: "resting_hr_bpm", pick: (r) => r.metrics?.rhrBpm, line: true },
+  { key: "resp", group: "Vitals", label: "Respiratory rate", unit: "rpm", format: "decimal1", colorBy: "single", direction: "neutral", href: metricHref("resp"), column: "respiratory_rate_rpm", pick: (r) => r.metrics?.respBpm, line: true },
+  { key: "spo2", group: "Vitals", label: "Blood oxygen", unit: "%", format: "decimal1", colorBy: "single", direction: "up", href: metricHref("spo2"), column: "spo2_pct", pick: (r) => r.metrics?.spo2Pct, line: true },
   { key: "skin", group: "Vitals", label: "Skin temperature", unit: "°C", format: "decimal1", colorBy: "single", direction: "toward_zero", href: metricHref("skin"), column: "skin_temperature_deviation_c", pick: (r) => r.recovery?.inputs.skinTempDev },
   { key: "stress", group: "Recovery & sleep", label: "Stress", format: "int", colorBy: "stress", direction: "down", href: "/health/stress", column: "stress_avg", pick: (r) => r.stress?.average, provisional: (r) => !!r.stress?.provisional, partialToday: true },
   { key: "steps", group: "Activity", label: "Steps", format: "grouped", colorBy: "single", direction: "up", href: metricHref("steps"), column: "steps", pick: (r) => r.metrics?.steps, partialToday: true },
-  { key: "weight", group: "Body", label: "Weight", unit: "kg", format: "decimal1", colorBy: "single", direction: "neutral", href: metricHref("weight"), column: "weight_kg", pick: (r) => r.metrics?.weightKg },
-  { key: "body_fat", group: "Body", label: "Body fat", unit: "%", format: "decimal1", colorBy: "single", direction: "down", href: metricHref("body_fat"), column: "body_fat_pct", pick: (r) => r.metrics?.bodyFatPct },
+  { key: "weight", group: "Body", label: "Weight", unit: "kg", format: "decimal1", colorBy: "single", direction: "neutral", href: metricHref("weight"), column: "weight_kg", pick: (r) => r.metrics?.weightKg, line: true },
+  { key: "body_fat", group: "Body", label: "Body fat", unit: "%", format: "decimal1", colorBy: "single", direction: "down", href: metricHref("body_fat"), column: "body_fat_pct", pick: (r) => r.metrics?.bodyFatPct, line: true },
 ];
 
 /** Every metric: Pulse's own first, then the source's extras from their catalogue, each in a picker section. */

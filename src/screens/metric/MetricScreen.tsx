@@ -107,6 +107,7 @@ export default function MetricScreen() {
                 reference={vm.chart.reference}
                 baseline={vm.chart.baseline}
                 smooth={vm.chart.smooth}
+                line={vm.chart.line}
               />
             </SectionShell>
             <RangeStatsCard {...stats} range={range} />

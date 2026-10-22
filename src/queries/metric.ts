@@ -64,6 +64,8 @@ type Config = {
   reference?: { y: number; label: string };
   smooth?: number;
   baseline?: boolean;
+  /** A level, not an amount: a line on a fitted axis in every range, never bars from zero (the vitals, weight, body fat, readings). */
+  line?: boolean;
 };
 
 /** The 7,000-a-day step reference (Lancet Public Health 2025), and the 150 weekly active minutes (WHO 2020). */
@@ -81,13 +83,13 @@ const CONFIG: Record<DetailKey, Config> = {
     sections: ["workouts"],
     about: "Everything you burned: your resting burn plus movement. Resting is the total minus active calories, since the source sends no separate resting roll-up.",
   },
-  hrv: { group: "vitals", baseline: true, sections: ["outliers"], about: "Variation in time between heartbeats during sleep, measured in milliseconds. Compare it with your own usual range." },
-  rhr: { group: "vitals", baseline: true, sections: ["outliers"], about: "Your resting heart rate from Health Connect, or the sleeping heart rate from your main sleep session when the daily value is missing." },
-  resp: { group: "vitals", baseline: true, sections: ["outliers"], about: "Breaths per minute during sleep, measured by your band." },
-  spo2: { group: "vitals", baseline: true, sections: ["outliers"], about: "Estimated blood oxygen saturation during sleep, measured by your band." },
+  hrv: { group: "vitals", line: true, baseline: true, sections: ["outliers"], about: "Variation in time between heartbeats during sleep, measured in milliseconds. Compare it with your own usual range." },
+  rhr: { group: "vitals", line: true, baseline: true, sections: ["outliers"], about: "Your resting heart rate from Health Connect, or the sleeping heart rate from your main sleep session when the daily value is missing." },
+  resp: { group: "vitals", line: true, baseline: true, sections: ["outliers"], about: "Breaths per minute during sleep, measured by your band." },
+  spo2: { group: "vitals", baseline: true, line: true, sections: ["outliers"], about: "Estimated blood oxygen saturation during sleep, measured by your band." },
   skin: { group: "vitals", baseline: true, sections: ["outliers"], reference: { y: 0, label: "Baseline" }, about: "Nightly skin temperature above or below your personal baseline, in degrees Celsius. This is a temperature difference, not your body temperature." },
-  weight: { group: "body", reading: true, smooth: 7, sections: ["readings"], about: "Your weight, from a connected scale or a manual log in your health app." },
-  body_fat: { group: "body", reading: true, smooth: 7, sections: ["readings"], about: "Body fat percentage, from a smart scale or a manual log." },
+  weight: { group: "body", line: true, reading: true, smooth: 7, sections: ["readings"], about: "Your weight, from a connected scale or a manual log in your health app." },
+  body_fat: { group: "body", line: true, reading: true, smooth: 7, sections: ["readings"], about: "Body fat percentage, from a smart scale or a manual log." },
   distance: { group: "activity", total: true, stack: "distance", sections: ["weekday"], about: "Distance covered on foot and in workouts, from your steps and GPS." },
   floors: { group: "activity", total: true, sections: ["weekday"], about: "Floors climbed, counted from changes in altitude as you walk." },
   elevation: { group: "activity", total: true, sections: ["weekday"], about: "Height gained over the day." },
@@ -105,14 +107,14 @@ const CONFIG: Record<DetailKey, Config> = {
     sections: ["hourly", ...LEVELS],
     about: "Time awake and still: minutes with no steps and a low heart rate, outside sleep and workouts. The hourly view shows your steps: the gaps are when you sat.",
   },
-  avg_hr: { group: "vitals", baseline: true, sections: ["outliers"], about: "Your average heart rate over the whole day, from your band." },
+  avg_hr: { group: "vitals", line: true, baseline: true, sections: ["outliers"], about: "Your average heart rate over the whole day, from your band." },
   water: { group: "nutrition", total: true, sections: ["entries"], about: "Water you logged in your health app." },
   calories_in: { group: "nutrition", sections: ["balance", "macros", "entries"], about: "Calories from the food you logged." },
   protein: { group: "nutrition", sections: ["macros", "entries"], about: "Protein from the food you logged." },
   carbs: { group: "nutrition", sections: ["macros", "entries"], about: "Carbohydrates from the food you logged." },
   fat: { group: "nutrition", sections: ["macros", "entries"], about: "Fat from the food you logged." },
-  glucose: { group: "vitals", reading: true, baseline: true, sections: ["outliers"], about: "Blood glucose readings from a connected meter or a manual log." },
-  core_temp: { group: "vitals", reading: true, baseline: true, sections: ["outliers"], about: "Core body temperature readings from a connected sensor." },
+  glucose: { group: "vitals", line: true, reading: true, baseline: true, sections: ["outliers"], about: "Blood glucose readings from a connected meter or a manual log." },
+  core_temp: { group: "vitals", line: true, reading: true, baseline: true, sections: ["outliers"], about: "Core body temperature readings from a connected sensor." },
   swim_strokes: { group: "activity", total: true, sections: [], about: "Strokes counted during pool swims." },
 };
 
@@ -186,7 +188,7 @@ export type MetricDetailVM = {
   history: Metric<Point[]>;
   ranges: Record<TrendRange, RangeStats>;
   total: boolean;
-  chart: { stack?: "calories" | "distance"; reference?: { y: number; label: string }; smooth?: number; baseline?: { mean: number; sd: number } | null };
+  chart: { stack?: "calories" | "distance"; reference?: { y: number; label: string }; smooth?: number; baseline?: { mean: number; sd: number } | null; line?: boolean };
   sections: Section[];
 };
 /** Alias: the task's name for the metric screen's view model. */
@@ -251,7 +253,7 @@ export async function getMetricDetail(key: DetailKey, day: string, ctx: QueryCtx
     history: shown.some((p) => p.value !== null) ? ok(shown) : none("no_data"),
     ranges,
     total: !!m.total,
-    chart: { stack: m.stack, reference: m.reference, smooth: m.smooth, baseline: out && { mean: out.mean, sd: out.sd } },
+    chart: { stack: m.stack, reference: m.reference, smooth: m.smooth, baseline: out && { mean: out.mean, sd: out.sd }, ...(m.line && { line: true }) },
     sections: built.filter((sec): sec is Section => !!sec),
   };
 }
