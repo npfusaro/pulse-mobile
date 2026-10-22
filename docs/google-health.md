@@ -136,10 +136,13 @@ two or more the band threw away) are counted beside them, since a crushed arm ca
 each dip's nadir in the warning colour when the heart answered, muted when not; the week table carries both counts.
 The arm's other signature, the slow sag the dip rule cannot see, is found separately: a run of ten minutes or more
 whose smoothed reading sits 3% under the night's good level (its 90th percentile) with the heart rate quiet across
-it (its mean within 4 bpm of the ten minutes before, no two-minute peak 5 bpm over) is an **arm stretch**, shaded on
-the chart and counted in minutes. The night's **average without the arm** (every minute outside the stretches and
-the flat dips) stands beside Fitbit's, which includes them; the metric page's history and the Health Monitor keep
-Fitbit's number. Counts, not a diagnosis.
+it (its mean within 4 bpm of the ten minutes before, no two-minute peak 5 bpm over) is an **arm stretch**. The chart
+highlights all three kinds of event, for reading against the raw trace: a breathing event (a dip the heart answered)
+washed amber, the arm (its stretches and the dips the heart ignored) washed grey, and the stretches with **no
+reading** as a bar along the floor. Fitbit drops the minutes it cannot read with confidence, and its nightly average
+is higher than the plain mean of the minutes it serves, so heavy pressure on the arm shows as no signal and only
+lighter pressure survives as a low reading; an "average without the arm" from the served minutes is therefore not
+comparable with Fitbit's and is not shown. Counts, not a diagnosis.
 
 **Zoom** on either night card opens the chart explorer on that night (`/chart?metric=spo2&r=day` or `metric=hrv`):
 pinch to zoom, drag to pan, hold to inspect, with the night's heart rate beside the series on its own axis and the

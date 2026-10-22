@@ -266,12 +266,45 @@ export function findArmStretches(spo2: readonly MinutePoint[], hr: readonly Minu
   return out;
 }
 
+export type SignalGap = { start: number; end: number; minutes: number };
+
 /**
- * The night's mean reading with the arm taken out: the minutes outside every arm stretch and outside every dip the
- * heart did not answer. Null when nothing is left. To one decimal.
+ * The night's stretches with no reading at all over [bed, wake), `minRun` minutes or longer: Fitbit drops the
+ * minutes it could not read with confidence, and an arm slept on hard is the usual reason it could not.
  */
-export function cleanAverage(spo2: readonly MinutePoint[], bed: number, wake: number, arm: readonly ArmStretch[], dips: readonly Spo2Dip[]): number | null {
-  const out = [...arm.map((a) => [a.start, a.end]), ...dips.filter((d) => d.hr === "flat").map((d) => [d.start, d.end])];
-  const v = spo2.filter((p) => p.t >= bed && p.t < wake && p.v !== null && !out.some(([s, e]) => p.t >= s && p.t < e)).map((p) => p.v!);
-  return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null;
+export function findSignalGaps(spo2: readonly MinutePoint[], bed: number, wake: number, minRun = 3): SignalGap[] {
+  const pts = spo2.filter((p) => p.t >= bed && p.t < wake);
+  const out: SignalGap[] = [];
+  let runStart: number | null = null;
+  let run = 0;
+  const close = (endT: number) => {
+    if (runStart !== null && run >= minRun) out.push({ start: runStart, end: endT, minutes: run });
+    runStart = null;
+    run = 0;
+  };
+  for (const p of pts) {
+    if (p.v === null) {
+      if (runStart === null) runStart = p.t;
+      run++;
+    } else close(p.t);
+  }
+  if (runStart !== null) close(pts[pts.length - 1].t + MIN);
+  return out;
+}
+
+/** Minutes covered by the union of the spans (epoch ms, [start, end)), so overlapping spans count once. */
+export function spanMinutes(spans: readonly { start: number; end: number }[]): number {
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  let total = 0;
+  let curStart = -Infinity;
+  let curEnd = -Infinity;
+  for (const s of sorted) {
+    if (s.start >= curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart;
+      curStart = s.start;
+      curEnd = s.end;
+    } else curEnd = Math.max(curEnd, s.end);
+  }
+  if (curEnd > curStart) total += curEnd - curStart;
+  return Math.round(total / MIN);
 }

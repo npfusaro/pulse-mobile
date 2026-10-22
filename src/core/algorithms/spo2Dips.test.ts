@@ -2,7 +2,7 @@
 // with the heart flat is flat, one with no heart rate around it is unknown; shallow wobbles are not dips; gaps
 // inside a dip do not end it; dips a minute apart merge; unreadable minutes count in runs.
 import { describe, expect, it } from "vitest";
-import { cleanAverage, findArmStretches, findSpo2Dips, spo2DipConfig, spo2GapMinutes, summarizeSpo2Dips } from "./spo2Dips";
+import { findArmStretches, findSignalGaps, findSpo2Dips, spanMinutes, spo2DipConfig, spo2GapMinutes, summarizeSpo2Dips } from "./spo2Dips";
 
 const T0 = Date.parse("2026-10-20T03:00:00Z");
 const MIN = 60_000;
@@ -115,16 +115,12 @@ describe("findArmStretches and cleanAverage", () => {
     expect(arm[0].gapMin).toBe(6);
   });
 
-  it("cleanAverage leaves out the arm stretches and the flat dips, keeps the answered ones", () => {
-    const spo2 = series(97, (i) => sag(i) ?? (i >= 110 && i < 113 ? 92 : undefined));
-    const hr = series(58, (i) => (i >= 111 && i < 115 ? 70 : undefined)); // the late dip is answered
-    const arm = findArmStretches(spo2, hr, bed, wake);
-    const dips = findSpo2Dips(spo2, hr, bed, wake);
-    expect(dips.map((d) => d.hr)).toEqual(["answered"]);
-    const clean = cleanAverage(spo2, bed, wake, arm, dips)!;
-    const raw = spo2.map((p) => p.v!).reduce((a, b) => a + b, 0) / spo2.length;
-    expect(clean).toBeGreaterThan(raw);
-    expect(clean).toBeLessThan(97); // the answered dip and the sag's shoulders stay in
-    expect(cleanAverage(spo2, bed, wake, [{ start: bed, end: wake, readMin: 0, gapMin: 0, meanPct: 0, drop: 0 }], [])).toBeNull();
+  it("findSignalGaps lists the unread stretches of three minutes or more; spanMinutes counts a union once", () => {
+    const spo2 = series(97, (i) => (i === 10 ? null : i >= 40 && i < 47 ? null : i >= 118 ? null : undefined));
+    const gaps = findSignalGaps(spo2, bed, wake);
+    expect(gaps).toEqual([{ start: T0 + 40 * MIN, end: T0 + 47 * MIN, minutes: 7 }]);
+    expect(findSignalGaps(spo2, bed, wake, 2)).toHaveLength(2);
+    expect(spanMinutes([{ start: T0, end: T0 + 10 * MIN }, { start: T0 + 5 * MIN, end: T0 + 12 * MIN }, { start: T0 + 20 * MIN, end: T0 + 21 * MIN }])).toBe(13);
+    expect(spanMinutes([])).toBe(0);
   });
 });

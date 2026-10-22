@@ -29,10 +29,15 @@ export type NightSpo2Series = {
   low?: { t: number; v: number } | null;
   /** Per-minute heart rate on the same grid, for the right-hand axis; null or absent draws no heart rate. */
   hr?: { t: number; v: number | null }[] | null;
-  /** The night's dips, each marked at its nadir: a ring in the warning colour when the heart answered, muted when not. */
-  dips?: { nadir: { t: number; v: number }; hr: "answered" | "flat" | "unknown" }[];
-  /** The arm stretches (a slow sag with the heart quiet), shaded across the plot. */
+  /**
+   * The night's dips: an answered one (the heart rose: a breathing event) is washed amber across its span with a ring
+   * at its nadir; a flat one (the heart did not: the arm) is washed grey with a muted ring.
+   */
+  dips?: { start: number; end: number; nadir: { t: number; v: number }; hr: "answered" | "flat" | "unknown" }[];
+  /** The arm stretches (a slow sag with the heart quiet), washed grey across the plot. */
   arm?: { start: number; end: number }[];
+  /** Stretches with no reading, drawn as a bar along the plot's floor. */
+  gaps?: { start: number; end: number }[];
 };
 
 export type NightSpo2ChartProps = { data: Metric<NightSpo2Series> | null | undefined };
@@ -71,6 +76,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
   const { bed, wake, points, low } = s;
   const dips = s.dips ?? [];
   const arm = s.arm ?? [];
+  const gaps = s.gaps ?? [];
   const hr = s.hr?.length ? s.hr : null;
   const hrByT = useMemo(() => new Map((hr ?? []).map((p) => [p.t, p.v])), [hr]);
   const hrAxis = hrTicks((hr ?? []).map((p) => p.v));
@@ -114,9 +120,18 @@ function Chart({ s }: { s: NightSpo2Series }) {
           <>
             <PlotCanvas width={width} height={height}>
               <GridLines ys={yTicks.map(y)} x0={x0} x1={x1} />
-              {/* The arm stretches: a muted wash across the plot, so the sag reads as a position, not a breathing problem. */}
-              {arm.map((a) => (
-                <Rect key={a.start} x={tx(a.start)} y={y0} width={Math.max(1, tx(a.end) - tx(a.start))} height={y1 - y0} color={alpha(c["muted-foreground"], 0.12)} />
+              {/* The events, washed across the plot: the arm (its sags and the dips the heart ignored) in grey, a breathing event (a dip the heart answered) in amber. */}
+              {[...arm, ...dips.filter((d) => d.hr !== "answered")].map((a) => (
+                <Rect key={`arm-${a.start}`} x={tx(a.start)} y={y0} width={Math.max(2, tx(a.end) - tx(a.start))} height={y1 - y0} color={alpha(c["muted-foreground"], 0.16)} />
+              ))}
+              {dips
+                .filter((d) => d.hr === "answered")
+                .map((d) => (
+                  <Rect key={`breath-${d.start}`} x={tx(d.start)} y={y0} width={Math.max(3, tx(d.end) - tx(d.start))} height={y1 - y0} color={alpha(c.warning, 0.22)} />
+                ))}
+              {/* No reading: a bar along the floor, where a gap in the line is otherwise easy to miss. */}
+              {gaps.map((g) => (
+                <Rect key={`gap-${g.start}`} x={tx(g.start)} y={y1 - 4} width={Math.max(2, tx(g.end) - tx(g.start))} height={4} color={alpha(c["muted-foreground"], 0.6)} />
               ))}
               {/* Heart rate in the Sleep page's neutral, not strain's blue: it must read apart from the SpO2 blue. */}
               {hrPath && <StrokePath path={hrPath} width={1} paint={{ color: c.foreground }} opacity={0.55} />}

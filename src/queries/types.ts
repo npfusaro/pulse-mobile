@@ -2,7 +2,7 @@
 // src/server/queries/types.ts so the ported UI consumes them unchanged.
 // Conventions: instants are epoch **milliseconds** (as the charts and cards take them), days are
 // local `YYYY-MM-DD`, Strain is a percent (0–100 on most days, above 100 on a very big one), and no number is ever NaN or ±Infinity.
-import type { ArmStretch, Spo2Dip, Spo2DipSummary } from "@/core/algorithms/spo2Dips";
+import type { ArmStretch, SignalGap, Spo2Dip, Spo2DipSummary } from "@/core/algorithms/spo2Dips";
 import type { ChipTone, DashboardKey, FormatKey, GoodDirection, RecoveryBand as Band, StressLevel } from "./_lib";
 import type { Metric, MetricTag, ReasonCode } from "@/lib/reasons";
 import type { EnergyBand } from "@/core/engine/energyBank";
@@ -431,18 +431,16 @@ export type BloodOxygenVM = {
   /** The night's average: Fitbit's nightly value when Health Connect has one, else the readings' own mean. */
   average: Metric<number>;
   /**
-   * The lowest minute, the minutes read, how many sat under 95%, the night's dips of 3% or more, each with the
-   * heart's answer, the arm stretches (a slow sag with the heart quiet) and their minutes, and the average with the
-   * arm taken out (src/core/algorithms/spo2Dips.ts), plus the minutes the band could not read.
+   * The lowest minute, the minutes read, how many sat under 95%, and the night's events for the chart to highlight
+   * (src/core/algorithms/spo2Dips.ts): the dips of 3% or more, each with the heart's answer; the arm stretches (a
+   * slow sag with the heart quiet) and the minutes they and the flat dips cover; the stretches with no reading at
+   * all (the band dropped the minutes, an arm slept on hard being the usual reason) and their minutes.
    */
-  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; cleanAverage: number | null }>;
+  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; gaps: SignalGap[]; gapMin: number }>;
   /** Where the average stands against 95–100, the range Fitbit and the Health Monitor use; null without an average. */
   chip: { tone: ChipTone; text: string } | null;
-  /**
-   * The seven nights ending on `day`, oldest first; nulls where the band read nothing. `answered` and `flat`: the
-   * night's dips the heart rate answered (breathing) and ignored (the arm, most likely).
-   */
-  nights: { day: string; average: number | null; low: number | null; below95Min: number | null; answered: number | null; flat: number | null; armMin: number | null; cleanAverage: number | null }[];
+  /** The seven nights ending on `day`, oldest first; nulls where the band read nothing. */
+  nights: { day: string; average: number | null; low: number | null; below95Min: number | null }[];
 };
 
 export type MonitorVM = {
