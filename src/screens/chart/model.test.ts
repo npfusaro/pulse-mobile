@@ -25,6 +25,9 @@ import {
   parseRange,
   pointLabels,
   valueText,
+  dayCompareViews,
+  MAX_COMPARES,
+  parseCompares,
   trendDaysFor,
   trendSeries,
   windowFor,
@@ -308,5 +311,24 @@ describe("the trend line", () => {
     expect(trendSeries({ ...p, cumulative: true }, 3)).toBeNull();
     expect(trendSeries(p, 1)).toBeNull();
     expect(trendSeries({ ...p, xs: [0, 1], ys: [1, 2] }, 3)).toBeNull();
+  });
+});
+
+describe("several compares", () => {
+  it("parses the compare param as a list: each key once, none left out", () => {
+    expect(parseCompares("hrv, rhr,hrv,,none")).toEqual(["hrv", "rhr"]);
+    expect(parseCompares(undefined)).toEqual([]);
+    expect(parseCompares("none")).toEqual([]);
+    expect(MAX_COMPARES).toBe(3);
+  });
+
+  it("a day's compares: the param's clock-sharing views in order, the default when empty, none on 'none' or the Sleep view", () => {
+    expect(dayCompareViews("spo2", undefined)).toEqual(["hr"]);
+    expect(dayCompareViews("spo2", "avg_hr,hrv")).toEqual(["hr", "hrv"]);
+    expect(dayCompareViews("spo2", "spo2,hrv,steps")).toEqual(["hrv"]); // itself and a metric with no day view drop out
+    expect(dayCompareViews("strain", "avg_hr,stress,energy,hrv")).toEqual(["hr", "stress", "energy"]);
+    expect(dayCompareViews("stress", "none")).toEqual([]);
+    expect(dayCompareViews("sleep", "avg_hr")).toEqual([]);
+    expect(dayCompareViews("hr", undefined)).toEqual([]);
   });
 });

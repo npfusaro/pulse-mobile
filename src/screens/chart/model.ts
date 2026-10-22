@@ -162,6 +162,35 @@ export const DAY_DEFAULT_COMPARE: Partial<Record<DayView, DayView>> = { strain: 
 /** The `compare` param that turns a day view's default compare off. */
 export const NO_COMPARE = "none";
 
+/** How many metrics can sit beside the primary at once (fork: was one). */
+export const MAX_COMPARES = 3;
+
+/** The `compare` param as a list of metric keys: comma-separated, trimmed, each once, "none" left out. */
+export function parseCompares(raw: string | undefined | null): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const k of raw.split(",").map((x) => x.trim())) if (k && k !== NO_COMPARE && !out.includes(k)) out.push(k);
+  return out;
+}
+
+/**
+ * The day views drawn beside `view`: the param's metrics that open a clock-sharing day view other than `view`
+ * itself, in order, at most MAX_COMPARES; none when the param says "none" (or for the Sleep view, which stands
+ * alone); the view's default (heart rate under Strain, stress, the Energy Bank, the night's SpO2 and HRV) when the
+ * param is empty.
+ */
+export function dayCompareViews(view: DayView, raw: string | undefined | null): DayView[] {
+  if (view === "sleep" || raw === NO_COMPARE) return [];
+  const keys = parseCompares(raw);
+  if (!keys.length) return DAY_DEFAULT_COMPARE[view] ? [DAY_DEFAULT_COMPARE[view]!] : [];
+  const out: DayView[] = [];
+  for (const k of keys) {
+    const v = DAY_COMPARE.find((x) => x.key === k)?.view;
+    if (v && v !== view && !out.includes(v)) out.push(v);
+  }
+  return out.slice(0, MAX_COMPARES);
+}
+
 /**
  * The day view drawn beside `view`: the one picked (the compare param's metric's day view) when it is another
  * clock-sharing view, nothing when the compare was turned off, else the view's default. The night stands alone.

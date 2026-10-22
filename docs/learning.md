@@ -766,3 +766,18 @@ flowchart LR
   AM --> HM[Stage 2: Health Monitor against Fitbit's ranges]
   AM --> NH[/health/night-hrv: hrv_days curve + deep value + range]
 ```
+
+## Several compares, and a chart that turns with the phone (fork)
+
+The explorer's `compare` param is a comma-separated list (up to three, `MAX_COMPARES`). Hooks can't be called a
+variable number of times, so both the data (`useCompareData`) and the chart's per-compare state (`useCompareSlot`:
+its y scale as shared values, its paths, its crosshair dot and readout text) live in three fixed slots, filled in
+order and empty past the list. Each compare keeps its own scale aligned to the primary's grid; the right axis has a
+labelled column for the first in portrait and for every one once the chart is 560 dp wide. The worklets that draw
+the axes capture each slot's shared values by name, not as an array.
+
+Full screen hides the chrome and calls `ScreenOrientation.lockAsync(OrientationLock.ALL)` (Android's full-sensor
+mode: it turns even with system auto-rotate off), then `PORTRAIT_UP` on the way out, Back included. The app stays
+portrait-locked everywhere else: the manifest's `screenOrientation="portrait"` is what the runtime call overrides,
+and the activity's `configChanges` already include `orientation|screenSize`, so a turn re-lays the screen out
+instead of restarting it; the chart re-measures through `onLayout` and keeps its viewport.

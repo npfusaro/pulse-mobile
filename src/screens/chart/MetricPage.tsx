@@ -1,6 +1,7 @@
 // The explorer's metric and compare pickers (halo src/screens/chart/MetricPage.tsx) as our route sheet
 // `/chart-metric?for=metric|compare&metric=&r=&d=&compare=`: Trends' metric sheet (one section open at a time, its
-// metrics as wrapping chips) over the explorer's catalogue. A choice goes back to /chart with the new params.
+// metrics as wrapping chips) over the explorer's catalogue. A choice goes back to /chart with the new params: a
+// compare is added to the ones on show (fork: up to MAX_COMPARES; tapping one already on show takes it off).
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -13,7 +14,7 @@ import { Icon } from "@/ui/Icon";
 import { Press } from "@/ui/Press";
 import { TaskPage } from "@/ui/shells/TaskPage";
 import { Text } from "@/ui/Text";
-import { DAY_COMPARE, NO_COMPARE, parseRange } from "./model";
+import { DAY_COMPARE, MAX_COMPARES, NO_COMPARE, parseCompares, parseRange } from "./model";
 
 type Group = { group: string; metrics: { key: string; label: string }[] };
 
@@ -36,7 +37,10 @@ export function ChartMetricPage() {
       ? [{ group: "Same day", metrics: DAY_COMPARE.filter((x) => x.view !== view).map((x) => ({ key: x.key, label: DAY_VIEW[x.view].label })) }]
       : CHART_GROUPS.map((g) => ({ group: g.group as string, metrics: g.metrics.filter((m) => m.key !== def?.key).map(({ key, label }) => ({ key, label })) })).filter((g) => g.metrics.length)
     : CHART_GROUPS.map((g) => ({ group: g.group as string, metrics: g.metrics.map(({ key, label }) => ({ key, label })) }));
-  const current = isCompare ? (p.compare ?? null) : (def?.key ?? null);
+  // The compares on show (the explorer sends them, a day's default included); the metric being changed.
+  const shown = parseCompares(p.compare);
+  const current = isCompare ? (shown[shown.length - 1] ?? null) : (def?.key ?? null);
+  const isOn = (key: string) => (isCompare ? shown.includes(key) : key === current);
   const [open, setOpen] = useState(groups.find((g) => g.metrics.some((m) => m.key === current))?.group ?? groups[0]?.group ?? "");
 
   // Back to the explorer with every param it keeps; an empty one is cleared.
@@ -46,15 +50,23 @@ export function ChartMetricPage() {
   };
   // A metric without the current day view falls back to its month; a compare on the new metric itself, or a day's
   // "none", was for the old metric and is cleared. Clearing a day's compare remembers "none" (its default would return).
-  const pickMetric = (key: string) => go({ metric: key, r: range === "day" && !chartDef(key)?.day ? "m" : range, ...(p.compare === key || p.compare === NO_COMPARE ? { compare: null } : {}) });
-  const pickCompare = (key: string | null) => go({ compare: key ?? (view ? NO_COMPARE : null) });
+  const pickMetric = (key: string) => {
+    const rest = parseCompares(p.compare).filter((k) => k !== key);
+    go({ metric: key, r: range === "day" && !chartDef(key)?.day ? "m" : range, compare: p.compare === NO_COMPARE ? null : rest.length ? rest.join(",") : null });
+  };
+  // A compare is added to those on show (the oldest gives way past the limit); one on show comes off; None clears all.
+  const pickCompare = (key: string | null) => {
+    if (key === null) return go({ compare: view ? NO_COMPARE : null });
+    const next = shown.includes(key) ? shown.filter((k) => k !== key) : [...shown, key].slice(-MAX_COMPARES);
+    go({ compare: next.length ? next.join(",") : view ? NO_COMPARE : null });
+  };
 
   return (
-    <TaskPage title={isCompare ? "Compare with" : "Metric"}>
+    <TaskPage title={isCompare ? (shown.length ? `Compare with (${shown.length} of ${MAX_COMPARES})` : "Compare with") : "Metric"}>
       <View className="px-4">
         {isCompare && (
           <View className="flex-row pb-3">
-            <Chip label="None" on={current === null || current === NO_COMPARE} onPress={() => pickCompare(null)} />
+            <Chip label="None" on={!shown.length} onPress={() => pickCompare(null)} />
           </View>
         )}
         {groups.map(({ group, metrics }, i) => {
@@ -73,7 +85,7 @@ export function ChartMetricPage() {
               {on && (
                 <View className="flex-row flex-wrap gap-2 pb-4">
                   {metrics.map((m) => (
-                    <Chip key={m.key} label={m.label} on={m.key === current} onPress={() => (isCompare ? pickCompare(m.key) : pickMetric(m.key))} />
+                    <Chip key={m.key} label={m.label} on={isOn(m.key)} onPress={() => (isCompare ? pickCompare(m.key) : pickMetric(m.key))} />
                   ))}
                 </View>
               )}

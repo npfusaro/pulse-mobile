@@ -1,16 +1,19 @@
 // The chart explorer `/chart?metric=&r=&d=&compare=` (halo src/screens/chart/ChartExplorer.tsx): one metric full screen
 // over its whole history (W / M / 6M / 1Y / All) or one day's minutes, with pinch-zoom and pan, a hold-to-inspect
-// crosshair and readout, the window's average, low and high, its normal range and goal, and a second metric on its own
-// axis to compare against. A day shows the metric's own picture of it beside the day's heart rate: Day Strain building
+// crosshair and readout, the window's average, low and high, its normal range and goal, and up to three metrics on
+// their own scales to compare against (fork: `compare` is a comma-separated list; was one). A full-screen mode (fork)
+// hides the chrome and lets the phone rotate, the chart filling portrait or landscape. A day shows the metric's own picture of it beside the day's heart rate: Day Strain building
 // up, stress or the Energy Bank with heart rate on the right axis; resting and average heart rate as a labelled line on
 // the heart rate; workouts lit on it; the night's heart rate over its stage lanes. Our chrome: the detail header row, the
 // range as the kit's segmented control, the window's numbers and the chart on cards. The pickers are the route sheet
 // /chart-metric (./MetricPage.tsx).
 import * as React from "react";
-import { View } from "react-native";
+import { BackHandler, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import * as ScreenOrientation from "expo-screen-orientation";
+import { setStatusBarHidden } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronsUpDown, Plus, X } from "lucide-react-native";
+import { ChevronsUpDown, Maximize2, Minimize2, Plus, X } from "lucide-react-native";
 import { DATA_COLORS, recoveryColor, STRESS_COLOR, stressLevel } from "@/lib/bands";
 import { bandColor, type Band } from "@/lib/charts";
 import { formatValue, MISSING, type FormatKey } from "@/lib/format";
@@ -42,7 +45,7 @@ import {
   DAILY_RANGES,
   dailySeries,
   DAY_COMPARE,
-  dayCompareView,
+  dayCompareViews,
   dayReference,
   daySeries,
   dayWhy,
@@ -52,8 +55,10 @@ import {
   gainNotes,
   inWorkouts,
   levelsFor,
+  MAX_COMPARES,
   NO_COMPARE,
   noteFor,
+  parseCompares,
   parseRange,
   pointLabels,
   RANGE_ARIA,
@@ -117,8 +122,28 @@ function paintOf(colorBy: SeriesColor, c: Palette, css: (v: string) => string, z
   return { line, bands: null, barColors: [line], group: () => 0, point: () => line };
 }
 
-/** A compare line's colour: the metric's own hue, unless the primary already wears it. */
-const compareColorOf = (primary: SeriesColor, compare: SeriesColor, c: Palette) => (hueOf(c, compare) !== hueOf(c, primary) ? hueOf(c, compare) : c["chart-4"]);
+/** Each compare's colour: its metric's own hue, unless the primary or an earlier compare already wears it. */
+function compareColorsOf(primary: SeriesColor, compares: SeriesColor[], c: Palette): string[] {
+  const used: string[] = [hueOf(c, primary)];
+  const spare: string[] = [c["chart-4"], c["chart-2"], c["chart-1"], c["chart-3"]];
+  return compares.map((x) => {
+    const own = hueOf(c, x);
+    const color = !used.includes(own) ? own : (spare.find((s) => !used.includes(s)) ?? c["chart-4"]);
+    used.push(color);
+    return color;
+  });
+}
+
+/** One compare's data, daily or the day's (a fixed number of these keeps the hooks in order). */
+function useCompareData(mode: "daily" | "day", cmp: ChartDef | undefined, cmpView: DayView | undefined, d: string) {
+  const series = useScreen((ctx) => (mode === "daily" && cmp ? getChartSeries(cmp.key, ctx) : Promise.resolve(null)), ["chartSeries", mode === "daily" ? (cmp?.key ?? null) : null]);
+  const day = useScreen((ctx) => (mode === "day" && cmpView ? getChartDay(cmpView, d, ctx) : Promise.resolve(null)), ["chartDay", mode === "day" ? (cmpView ?? null) : null, d]);
+  return {
+    dailyVm: mode === "daily" && cmp && series.data?.key === cmp.key ? series.data : null,
+    dayVm: mode === "day" && cmpView && day.data?.view === cmpView && day.data.day === d ? day.data : null,
+    dayError: day.error,
+  };
+}
 
 const tickText = (format: FormatKey) => (format === "duration" ? (v: number) => formatValue(format, v) : wholeTick((v) => formatValue(format, v)));
 
@@ -173,12 +198,20 @@ export default function ChartExplorer() {
   const view = mode === "day" ? def.day! : null;
   const d = typeof params.d === "string" && DAY_RE.test(params.d) && params.d <= today ? params.d : today;
   const rawParam = typeof params.compare === "string" && params.compare ? params.compare : undefined;
-  const rawCompare = chartDef(rawParam);
-  const picked = rawCompare && rawCompare.key !== def.key ? rawCompare : null;
-  // Daily: any other metric. A day: another of the clock-sharing day views, by default the day's heart rate beside
-  // Strain, stress and the Energy Bank ("none" turns that off).
-  const cmpView: DayView | null = view ? dayCompareView(view, rawParam === NO_COMPARE ? NO_COMPARE : (picked?.day ?? null)) : null;
-  const cmp: ChartDef | null = mode === "daily" ? picked : cmpView ? chartDef(DAY_COMPARE.find((x) => x.view === cmpView)?.key) : null;
+  // Daily: up to three other metrics. A day: up to three other clock-sharing day views, by default the day's heart
+  // rate beside Strain, stress, the Energy Bank and the night's SpO2 and HRV ("none" turns that off).
+  const cmpViewsKey = view ? dayCompareViews(view, rawParam).join(",") : "";
+  const cmpViews = React.useMemo(() => (cmpViewsKey ? (cmpViewsKey.split(",") as DayView[]) : []), [cmpViewsKey]);
+  const cmps: ChartDef[] = React.useMemo(() => {
+    const keys = mode === "daily" ? parseCompares(rawParam) : cmpViews.map((v) => DAY_COMPARE.find((x) => x.view === v)?.key ?? "");
+    const out: ChartDef[] = [];
+    for (const k of keys) {
+      const x = chartDef(k);
+      if (x && x.key === k && x.key !== def.key && !out.some((o) => o.key === k)) out.push(x);
+    }
+    return out.slice(0, MAX_COMPARES);
+  }, [mode, rawParam, def.key, cmpViews]);
+  const compareKeys = cmps.map((x) => x.key);
 
   // Only the keys given change; a null clears that param (replaced in place, so Back leaves the screen).
   const setParams = (next: { r?: Range; compare?: string | null }) => {
@@ -186,20 +219,26 @@ export default function ChartExplorer() {
     for (const [key, val] of Object.entries(next)) out[key] = val ?? "";
     router.setParams(out);
   };
-  // Clearing the compare: a day view remembers "none" (its default would come back otherwise).
-  const clearCompare = () => setParams({ compare: mode === "day" ? NO_COMPARE : null });
-  const pick = (kind: "metric" | "compare") =>
-    push(`/chart-metric?for=${kind}&metric=${encodeURIComponent(def.key)}&r=${range}${params.d ? `&d=${params.d}` : ""}${rawParam ? `&compare=${encodeURIComponent(rawParam)}` : ""}`);
+  // Removing a compare: the rest stay; the last one gone, a day view remembers "none" (its default would come back).
+  const removeCompare = (key: string) => {
+    const rest = compareKeys.filter((k) => k !== key);
+    setParams({ compare: rest.length ? rest.join(",") : mode === "day" ? NO_COMPARE : null });
+  };
+  // The compare picker gets the compares on show (a day's default included), so a choice adds to them.
+  const pick = (kind: "metric" | "compare") => {
+    const cmpParam = kind === "compare" ? compareKeys.join(",") : (rawParam ?? "");
+    push(`/chart-metric?for=${kind}&metric=${encodeURIComponent(def.key)}&r=${range}${params.d ? `&d=${params.d}` : ""}${cmpParam ? `&compare=${encodeURIComponent(cmpParam)}` : ""}`);
+  };
 
   // --- Data ---
   const series = useScreen((ctx) => (mode === "daily" ? getChartSeries(def.key, ctx) : Promise.resolve(null)), ["chartSeries", mode === "daily" ? def.key : null]);
   const day = useScreen((ctx) => (view ? getChartDay(view, d, ctx) : Promise.resolve(null)), ["chartDay", view, d]);
-  const cmpSeries = useScreen((ctx) => (mode === "daily" && cmp ? getChartSeries(cmp.key, ctx) : Promise.resolve(null)), ["chartSeries", mode === "daily" ? (cmp?.key ?? null) : null]);
-  const cmpDay = useScreen((ctx) => (mode === "day" && cmpView ? getChartDay(cmpView, d, ctx) : Promise.resolve(null)), ["chartDay", mode === "day" ? cmpView : null, d]);
+  const cd0 = useCompareData(mode, cmps[0], cmpViews[0], d);
+  const cd1 = useCompareData(mode, cmps[1], cmpViews[1], d);
+  const cd2 = useCompareData(mode, cmps[2], cmpViews[2], d);
+  const cmpData = [cd0, cd1, cd2].slice(0, cmps.length);
   const dailyVm: ChartSeriesVM | null = mode === "daily" && series.data?.key === def.key ? series.data : null;
   const dayVm: ChartDayVM | null = view && day.data?.view === view && day.data.day === d ? day.data : null;
-  const cmpDailyVm = mode === "daily" && cmp && cmpSeries.data?.key === cmp.key ? cmpSeries.data : null;
-  const cmpDayVm = mode === "day" && cmpView && cmpDay.data?.view === cmpView && cmpDay.data.day === d ? cmpDay.data : null;
   const error = mode === "daily" ? series.error : day.error;
 
   const title = view ? DAY_VIEW[view].label : def.label;
@@ -210,7 +249,9 @@ export default function ChartExplorer() {
   // --- The model: series, colours, the readout's text ---
   const model = React.useMemo(() => {
     let primary: Series | null = null;
-    let compare: Series | null = null;
+    const compares: Series[] = [];
+    // Per compare drawn: its day view and that day's heart-rate zones (a day), for its colours.
+    const meta: { key: string; view: DayView | null; zones: ChartDayVM["zones"] }[] = [];
     let days: string[] | null = null;
     let end = 0;
     let extent: { min: number; max: number; minSpan: number } | null = null;
@@ -219,26 +260,38 @@ export default function ChartExplorer() {
       days = dailyVm.days;
       end = Math.max(0, days.indexOf(d) >= 0 ? days.indexOf(d) : days.length - 1);
       extent = extentOf("daily", primary);
-      if (cmp && cmpDailyVm)
-        compare = {
-          ...dailySeries(cmp, cmpDailyVm),
-          xs: primary.xs,
-          ys: alignDaily(dailyVm, cmpDailyVm),
-          partial: alignDaily(dailyVm, { ...cmpDailyVm, values: cmpDailyVm.partial.map((p) => (p ? 1 : null)) }).map((x) => x === 1),
-        };
+      cmps.forEach((cmp, i) => {
+        const vm = cmpData[i]?.dailyVm;
+        if (!vm) return;
+        compares.push({
+          ...dailySeries(cmp, vm),
+          xs: primary!.xs,
+          ys: alignDaily(dailyVm, vm),
+          partial: alignDaily(dailyVm, { ...vm, values: vm.partial.map((x) => (x ? 1 : null)) }).map((x) => x === 1),
+        });
+        meta.push({ key: cmp.key, view: null, zones: [] });
+      });
     } else if (mode === "day" && dayVm && view) {
       primary = daySeries(dayVm, title, unit, format);
       extent = extentOf("day", primary, dayVm.from, dayVm.to);
       // A compare with nothing on this day (no Energy Bank yet) draws no line and no axis.
-      if (cmpView && cmpDayVm && cmpDayVm.ys.some((y) => y !== null)) compare = daySeries(cmpDayVm, DAY_VIEW[cmpView].label, DAY_VIEW[cmpView].unit, DAY_VIEW[cmpView].format);
+      cmpViews.forEach((cv, i) => {
+        const vm = cmpData[i]?.dayVm;
+        if (!vm || !vm.ys.some((y) => y !== null)) return;
+        compares.push(daySeries(vm, DAY_VIEW[cv].label, DAY_VIEW[cv].unit, DAY_VIEW[cv].format));
+        meta.push({ key: cmps[i]?.key ?? cv, view: cv, zones: vm.zones });
+      });
     }
     if (!primary || !extent) return null;
     const paint = paintOf(primary.colorBy, c, css, dayVm?.zones ?? [], view ?? undefined);
-    const comparePaint = compare ? compareColorOf(primary.colorBy, compare.colorBy, c) : c["chart-4"];
+    const comparePaints = compareColorsOf(primary.colorBy, compares.map((x) => x.colorBy), c);
     // Heart rate beside Day Strain keeps its zone colours (Strain builds only in the zones); beside stress or the Energy
     // Bank it is one quiet colour, so the primary's own colours stay the ones that mean something.
-    const compareBands = compare && view === "strain" && cmpView === "hr" && cmpDayVm?.zones.length ? zoneBands(cmpDayVm.zones).map((b) => ({ ...b, color: css(b.color) })) : null;
-    const compareColors = compare && compareBands ? compare.ys.map((v) => (v === null ? comparePaint : bandColor(v, compareBands))) : null;
+    const compareBands = compares.map((_, i) => (view === "strain" && meta[i].view === "hr" && meta[i].zones.length ? zoneBands(meta[i].zones).map((b) => ({ ...b, color: css(b.color) })) : null));
+    const compareColors = compares.map((x, i) => {
+      const bands = compareBands[i];
+      return bands ? x.ys.map((v) => (v === null ? comparePaints[i] : bandColor(v, bands))) : null;
+    });
     const baseline = dailyVm?.baseline ?? null;
     // The shaded range: the normal range (daily), or the day's Strain Target under Day Strain.
     const shade = baseline ? { lo: baseline.mean - baseline.sd, hi: baseline.mean + baseline.sd, label: "Shaded: your normal range" } : view === "strain" && dayVm?.band ? { ...dayVm.band, label: `Shaded: Strain Target ${formatValue("int", dayVm.band.lo)}–${formatValue("pct", dayVm.band.hi)}` } : null;
@@ -246,10 +299,10 @@ export default function ChartExplorer() {
     // A heart-rate day draws its metric's own value as a labelled line: the day's resting heart rate, or its average.
     const ref = view === "hr" && dayVm ? dayReference(def.key, dayVm.refs) : null;
     const goal = goalY !== null ? { y: goalY, label: `Goal ${formatValue(format, goalY)}` } : mode === "daily" ? (dailyVm?.reference ?? null) : ref ? { y: ref.y, label: `${ref.label} ${valueText(ref.y, format, unit)}` } : null;
-    const cIdx = compare ? compareIndex(mode, primary, compare) : primary.xs.map(() => -1);
+    const cIdx = compares.map((x) => compareIndex(mode, primary!, x));
     const dates = pointLabels(mode, primary.xs, days, today);
     const values = primary.ys.map((v) => (v === null ? "No data" : valueText(v, format, unit)));
-    const compares = compare ? cIdx.map((j) => (j < 0 ? MISSING : valueText(compare!.ys[j], compare!.format, compare!.unit))) : [];
+    const compareTexts = compares.map((x, i) => cIdx[i].map((j) => (j < 0 ? MISSING : valueText(x.ys[j], x.format, x.unit))));
     // What a day view says of each point from its own data (else the window's: the normal range, the goal or the average).
     const refNotes = ref ? primary.ys.map((v) => noteFor(v, format, unit, { reference: ref })) : null;
     const viewNotes: (string | null)[] | null =
@@ -263,12 +316,12 @@ export default function ChartExplorer() {
     let latest: { index: number; text: string } | null = null;
     if (primary.cumulative) for (let i = primary.ys.length - 1; i >= 0 && !latest; i--) if (primary.ys[i] !== null) latest = { index: i, text: valueText(primary.ys[i], format, unit) };
     const hot = workouts && dayVm ? inWorkouts(primary.xs, dayVm.spans) : null;
-    // A day names both series in the readout; a daily chart leaves the metric to the header and names the compare.
-    const names = mode === "day" ? { primary: primary.label, compare: compare?.label ?? null } : compare ? { primary: null, compare: compare.label } : null;
+    // A day names every series in the readout; a daily chart leaves the metric to the header and names the compares.
+    const names = mode === "day" ? { primary: primary.label, compares: compares.map((x) => x.label) } : compares.length ? { primary: null, compares: compares.map((x) => x.label) } : null;
     const home = mode === "day" ? ((workouts && dayVm ? workoutWindow(dayVm.spans, extent) : null) ?? { start: extent.min, span: extent.max - extent.min }) : null;
-    const dataKey = `${mode}|${primary.key}|${days?.length ?? primary.xs.length}|${dayVm?.day ?? ""}|${compare?.key ?? ""}|${compare ? compare.ys.length : 0}`;
-    return { primary, compare, days, end, extent, home, paint, comparePaint, compareBands, compareColors, baseline, shade, goal, ref, personalGoal: goalY !== null, cIdx, dates, values, compares, viewNotes, colors, barGroup, partialColor, latest, hot, names, dataKey, levels: levelsFor(mode, days, extent.min, extent.max) };
-  }, [mode, dailyVm, dayVm, cmp, cmpView, cmpDailyVm, cmpDayVm, def, d, view, title, unit, format, c, css, goals, today, workouts]);
+    const dataKey = `${mode}|${primary.key}|${days?.length ?? primary.xs.length}|${dayVm?.day ?? ""}|${compares.map((x) => `${x.key}:${x.ys.length}`).join(",")}`;
+    return { primary, compares, meta, days, end, extent, home, paint, comparePaints, compareBands, compareColors, baseline, shade, goal, ref, personalGoal: goalY !== null, cIdx, dates, values, compareTexts, viewNotes, colors, barGroup, partialColor, latest, hot, names, dataKey, levels: levelsFor(mode, days, extent.min, extent.max) };
+  }, [mode, dailyVm, dayVm, cmps, cmpViews, cd0.dailyVm, cd1.dailyVm, cd2.dailyVm, cd0.dayVm, cd1.dayVm, cd2.dayVm, def, d, view, title, unit, format, c, css, goals, today, workouts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- The viewport JS knows about: the range's window, then wherever a gesture settled ---
   const home = React.useMemo(() => (!model ? null : (model.home ?? windowFor(range, model.primary, model.end))), [model, range]);
@@ -280,6 +333,7 @@ export default function ChartExplorer() {
   // The trend over the days on show (a daily window; a day view's minutes read as they are), refit when a gesture settles.
   const trendDays = mode === "daily" && v ? trendDaysFor(v.span) : 0;
   const trend = React.useMemo(() => (model && trendDays ? trendSeries(model.primary, trendDays) : null), [model, trendDays]);
+  const compareTrends = React.useMemo(() => (model ? model.compares.map((x) => (trendDays ? trendSeries(x, trendDays) : null)) : []), [model, trendDays]);
 
   // --- Axes and summary for the visible window (refit when a gesture settles, never per frame) ---
   const axes = React.useMemo(() => {
@@ -288,12 +342,12 @@ export default function ChartExplorer() {
     const to = v.start + v.span;
     const bars = drawsBars(model.primary, v.span);
     const domain = yDomain(model.primary, from, to, { bars, extra: [model.goal?.y, model.shade?.lo, model.shade?.hi], count: 3 });
-    const domain2 = model.compare ? compareDomain(model.compare, from, to, domain.ticks.length) : null;
+    const domains2 = model.compares.map((x) => compareDomain(x, from, to, domain.ticks.length));
     const stats = summaryOf(model.primary, from, to);
     const running = model.primary.cumulative ? runningStats(model.primary, from, to) : null;
-    const cStats = model.compare ? summaryOf(model.compare, from, to) : null;
+    const cStats = model.compares.map((x) => summaryOf(x, from, to));
     const yLabels = domain.ticks.map(tickText(format));
-    const y2Labels = domain2 && model.compare ? domain2.ticks.map(tickText(model.compare.format)) : [];
+    const y2Labels = domains2.map((d2, i) => d2.ticks.map(tickText(model.compares[i].format)));
     // Each point against the normal range, else the goal, else the window's average (a day view's own note first).
     const basis = { baseline: model.baseline, goal: model.goal && model.personalGoal && !model.baseline ? model.goal.y : null, average: stats.avg };
     // Blood oxygen's nights also say how much of the sleep had no reading: an outlier from a few good minutes shows as one.
@@ -303,22 +357,31 @@ export default function ChartExplorer() {
       const nd = noData?.[i];
       return nd == null ? note : [note, `${nd}% no data`].filter(Boolean).join(" · ");
     });
-    return { from, to, domain, domain2, stats, running, cStats, yLabels, y2Labels, notes };
+    return { from, to, domain, domains2, stats, running, cStats, yLabels, y2Labels, notes };
   }, [model, v?.start, v?.span, format, unit]); // eslint-disable-line react-hooks/exhaustive-deps
-  const readout = React.useMemo(() => (model && axes ? { dates: model.dates, values: model.values, compares: model.compares, notes: axes.notes, colors: model.colors, compareColors: model.compareColors } : null), [model, axes]);
+  const readout = React.useMemo(() => (model && axes ? { dates: model.dates, values: model.values, compares: model.compareTexts, notes: axes.notes, colors: model.colors, compareColors: model.compareColors } : null), [model, axes]);
 
   // --- Layout ---
   const [box, setBox] = React.useState({ w: 0, h: 0 });
   const ranges: Range[] = def.day ? ["day", ...DAILY_RANGES] : [...DAILY_RANGES];
   const canCompare = mode === "daily" || (view !== null && view !== "sleep");
   const empty = model ? model.primary.ys.every((y) => y === null) : false;
-  // A day's line beside it (heart rate by default) is waited for, so both draw in together, once.
-  const loading = (!model && !error) || (mode === "day" && !!cmpView && !cmpDayVm && !cmpDay.error);
-  // The compare's day loaded with nothing on it: the chart has no second line, so neither does the header.
-  const cmpEmpty = !!cmpDayVm && cmpDayVm.ys.every((y) => y === null);
-  const subtitle = mode === "daily" ? def.group : view ? dayWhy(view, def.key, cmp && !cmpEmpty ? cmpView : null) : undefined;
+  // A day's lines beside it (heart rate by default) are waited for, so they all draw in together, once.
+  const loading = (!model && !error) || (mode === "day" && cmpData.some((x) => !x.dayVm && !x.dayError));
+  // A compare's day loaded with nothing on it: the chart has no line for it, so the header leaves it out.
+  const cmpEmpty = (i: number) => !!cmpData[i]?.dayVm && cmpData[i].dayVm!.ys.every((y) => y === null);
+  const firstShown = cmpViews.find((_, i) => !cmpEmpty(i)) ?? null;
+  const subtitle = mode === "daily" ? def.group : view ? dayWhy(view, def.key, firstShown) : undefined;
   const windowLabel = model && axes ? windowText(mode, axes.from, axes.to, model.days, today) : "";
-  const compareName = mode === "day" && cmpView ? DAY_VIEW[cmpView].label : (cmp?.label ?? "");
+  const compareName = (i: number) => (mode === "day" && cmpViews[i] ? DAY_VIEW[cmpViews[i]].label : (cmps[i]?.label ?? ""));
+  // A compare's colour in the legend: the one the chart draws it in (bands: its top band).
+  const drawnIndex = (key: string) => model?.meta.findIndex((m) => m.key === key) ?? -1;
+  const legendColor = (key: string) => {
+    const j = drawnIndex(key);
+    if (j < 0 || !model) return c["muted-foreground"];
+    const bands = model.compareBands[j];
+    return bands ? bands[bands.length - 1].color : model.comparePaints[j];
+  };
   const primaryColor = model?.paint.bands ? model.paint.bands[model.paint.bands.length - 1].color : (model?.paint.line ?? c["chart-5"]);
   const stageColor = { awake: c["stage-awake"], rem: c["stage-rem"], light: c["stage-light"], deep: c["stage-deep"] } as const;
 
@@ -334,7 +397,7 @@ export default function ChartExplorer() {
     <>
       <Stat label="Strain" value={axes.running.end} format={format} unit={unit} />
       <Stat label="Gained" value={axes.running.gained} format={format} unit={unit} text={axes.running.gained === null ? undefined : deltaText(axes.running.gained, format, unit)} />
-      {model?.compare && cmpView ? <Stat label={`Avg ${SHORT[cmpView]}`} value={axes.cStats?.avg ?? null} format={model.compare.format} unit={model.compare.unit} /> : <Stat label="Start" value={axes.running.start} format={format} unit={unit} />}
+      {model?.compares[0] && model.meta[0]?.view ? <Stat label={`Avg ${SHORT[model.meta[0].view]}`} value={axes.cStats[0]?.avg ?? null} format={model.compares[0].format} unit={model.compares[0].unit} /> : <Stat label="Start" value={axes.running.start} format={format} unit={unit} />}
     </>
   ) : (
     <>
@@ -343,6 +406,140 @@ export default function ChartExplorer() {
       <Stat label="High" value={axes.stats.max} format={format} unit={unit} />
     </>
   );
+
+  // --- Full screen: the chart alone, the phone free to rotate; Back or the button returns ---
+  const [full, setFull] = React.useState(false);
+  React.useEffect(() => {
+    if (!full) return;
+    setStatusBarHidden(true, "fade");
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.ALL).catch(() => {});
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      setFull(false);
+      return true;
+    });
+    return () => {
+      back.remove();
+      setStatusBarHidden(false, "fade");
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
+  }, [full]);
+  const [fullBox, setFullBox] = React.useState({ w: 0, h: 0 });
+
+  const chartBody = (w: number, h: number) =>
+    error && !model ? (
+      <View className="flex-1 justify-center px-4">
+        <EmptyState body="This chart could not load. Pull to refresh on the screen you came from, then try again." />
+      </View>
+    ) : loading || !fonts || !w || !axes || !readout || !model || !home ? (
+      <View className="flex-1 px-3 py-1">
+        <Skeleton className="flex-1 rounded-xl" />
+      </View>
+    ) : empty ? (
+      <View className="flex-1 justify-center px-4">
+        <EmptyState body={view ? EMPTY_DAY[view] : `No ${def.label.toLowerCase()} recorded yet.`} />
+      </View>
+    ) : (
+      <ExplorerChart
+        width={w}
+        height={h}
+        mode={mode}
+        primary={model.primary}
+        trend={trend}
+        compares={model.compares}
+        compareTrends={compareTrends}
+        extent={model.extent}
+        window={win}
+        home={home}
+        domain={axes.domain}
+        domains2={axes.domains2}
+        yLabels={axes.yLabels}
+        y2Labels={axes.y2Labels}
+        levels={model.levels}
+        baseline={model.shade ? [model.shade.lo, model.shade.hi] : null}
+        goal={model.goal}
+        spans={dayVm?.spans ?? []}
+        emphasis={workouts ? "workouts" : null}
+        stages={dayVm?.stages ?? []}
+        bed={dayVm?.bed ?? null}
+        wake={dayVm?.wake ?? null}
+        now={dayVm?.now ?? null}
+        readout={readout}
+        names={model.names}
+        compareIdx={model.cIdx}
+        lineColor={model.paint.line}
+        bands={model.paint.bands}
+        hot={model.hot}
+        barGroup={model.barGroup}
+        partialColor={model.partialColor}
+        barColors={model.paint.barColors}
+        compareColors={model.comparePaints}
+        compareBands={model.compareBands}
+        latest={model.latest}
+        dataKey={model.dataKey}
+        onViewport={onViewport}
+        fonts={fonts}
+      />
+    );
+
+  // The legend: every series and line on the chart by name; each compare with its window average and an X that drops
+  // it; then the action that adds one (up to three).
+  const legend = (
+    <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
+      <LegendKey color={primaryColor} label={title} />
+      {model?.ref && model.goal && <LegendKey color={c["chart-cursor"]} label={model.goal.label} mark="dash" />}
+      {workouts && <LegendKey color={c.strain} label="Workouts" mark="block" />}
+      {(view === "sleep" || view === "spo2" || view === "hrv") && (dayVm?.stages.length ?? 0) > 0 && (["awake", "rem", "light", "deep"] as const).map((st) => <LegendKey key={st} color={stageColor[st]} label={STAGE_NAME[st]} mark="dot" />)}
+      {canCompare &&
+        cmps.map((cmp, i) => {
+          const j = drawnIndex(cmp.key);
+          const avg = j >= 0 ? axes?.cStats[j]?.avg : null;
+          const series = j >= 0 ? model?.compares[j] : null;
+          return (
+            <Press key={cmp.key} activeScale={0.96} accessibilityRole="button" accessibilityLabel={`Stop comparing with ${compareName(i)}`} onPress={() => (haptic.tap(), removeCompare(cmp.key))} className={cn(COMPARE, "shrink")}>
+              <View style={{ width: 12, height: 3, borderRadius: 1.5, backgroundColor: legendColor(cmp.key) }} />
+              <Text className={cn(LABEL, "shrink text-[11px] text-foreground-secondary")}>
+                {compareName(i)}
+                {avg != null && series ? <Text className="text-muted-foreground">{` · avg ${valueText(avg, series.format, series.unit)}`}</Text> : cmpEmpty(i) ? <Text className="text-muted-foreground">{" · none this day"}</Text> : null}
+              </Text>
+              <Icon icon={X} size={14} tone="muted-foreground" strokeWidth={2} />
+            </Press>
+          );
+        })}
+      {canCompare && cmps.length < MAX_COMPARES && (
+        <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel="Compare with another metric" onPress={() => (haptic.tap(), pick("compare"))} className={COMPARE}>
+          <Text className={cn(LABEL, "text-[13px]")}>Compare</Text>
+          <Icon icon={Plus} size={16} tone="foreground" strokeWidth={2.25} />
+        </Press>
+      )}
+    </View>
+  );
+  const caption = (model?.shade || trend) && (
+    <Text className="text-[13px] leading-5 text-muted-foreground">
+      {[model?.shade?.label, trend ? `Bold lines: ${trendDays}-day averages; dots: each day` : null, model && model.compares.length > 1 ? "Each compare on its own scale" : null].filter(Boolean).join(" · ")}
+    </Text>
+  );
+
+  if (full)
+    return (
+      // The chart alone over the whole screen, whichever way the phone is held; the insets keep it off a cutout.
+      <View className="flex-1 bg-background" style={{ paddingTop: Math.max(insets.top, 8), paddingBottom: Math.max(insets.bottom, 8), paddingLeft: Math.max(insets.left, 12), paddingRight: Math.max(insets.right, 12) }}>
+        <View className="flex-row items-center gap-3 pb-1">
+          <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel="Exit full screen" onPress={() => (haptic.tap(), setFull(false))} hitSlop={8} className="size-9 items-center justify-center rounded-full bg-secondary">
+            <Icon icon={Minimize2} size={18} tone="foreground" strokeWidth={2} />
+          </Press>
+          <View className="min-w-0 flex-1">
+            <Text className="text-[15px] font-semibold leading-5" numberOfLines={1}>
+              {def.label}
+              <Text className="text-[13px] font-medium text-foreground-secondary">{windowLabel ? `  ${windowLabel}` : ""}</Text>
+            </Text>
+          </View>
+        </View>
+        <View accessibilityHint={HINT} className="flex-1" onLayout={(e) => setFullBox({ w: Math.round(e.nativeEvent.layout.width), h: Math.round(e.nativeEvent.layout.height) })}>
+          {chartBody(fullBox.w, fullBox.h)}
+        </View>
+        <View className="pt-1">{legend}</View>
+      </View>
+    );
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
@@ -365,103 +562,28 @@ export default function ChartExplorer() {
               <DateSwitcher mode="day" />
             </View>
           )}
-          {/* The visible window's numbers (refreshed when a gesture settles), as Trend View's headline. */}
+          {/* The visible window's numbers (refreshed when a gesture settles), as Trend View's headline; full screen at its right. */}
           <View className="gap-3">
-            <Text className="text-[13px] font-medium leading-[18px] tabular-nums text-foreground-secondary">{windowLabel || " "}</Text>
+            <View className="flex-row items-center justify-between gap-3">
+              <Text className="shrink text-[13px] font-medium leading-[18px] tabular-nums text-foreground-secondary">{windowLabel || " "}</Text>
+              <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel="Full screen: turn the phone for landscape" onPress={() => (haptic.tap(), setFull(true))} hitSlop={10} className="size-8 items-center justify-center rounded-full bg-secondary">
+                <Icon icon={Maximize2} size={16} tone="foreground-secondary" strokeWidth={2} />
+              </Press>
+            </View>
             <View className="flex-row gap-3">{stats}</View>
           </View>
         </View>
 
-        {/* The chart on the ground, as Trend View's: its legend above it at the right, then the plot, at most 340 tall. */}
+        {/* The chart on the ground, as Trend View's: the plot, at most 340 tall, its legend under it. */}
         <View accessibilityHint={HINT} className="min-h-[220px] max-h-[340px] flex-1 px-4">
           <View className="flex-1" onLayout={(e) => setBox({ w: Math.round(e.nativeEvent.layout.width), h: Math.round(e.nativeEvent.layout.height) })}>
-            {error && !model ? (
-              <View className="flex-1 justify-center px-4">
-                <EmptyState body="This chart could not load. Pull to refresh on the screen you came from, then try again." />
-              </View>
-            ) : loading || !fonts || !box.w || !axes || !readout || !model || !home ? (
-              <View className="flex-1 px-3 py-1">
-                <Skeleton className="flex-1 rounded-xl" />
-              </View>
-            ) : empty ? (
-              <View className="flex-1 justify-center px-4">
-                <EmptyState body={view ? EMPTY_DAY[view] : `No ${def.label.toLowerCase()} recorded yet.`} />
-              </View>
-            ) : (
-              <ExplorerChart
-                width={box.w}
-                height={box.h}
-                mode={mode}
-                primary={model.primary}
-                trend={trend}
-                compare={model.compare}
-                extent={model.extent}
-                window={win}
-                home={home}
-                domain={axes.domain}
-                domain2={axes.domain2}
-                yLabels={axes.yLabels}
-                y2Labels={axes.y2Labels}
-                levels={model.levels}
-                baseline={model.shade ? [model.shade.lo, model.shade.hi] : null}
-                goal={model.goal}
-                spans={dayVm?.spans ?? []}
-                emphasis={workouts ? "workouts" : null}
-                stages={dayVm?.stages ?? []}
-                bed={dayVm?.bed ?? null}
-                wake={dayVm?.wake ?? null}
-                now={dayVm?.now ?? null}
-                readout={readout}
-                names={model.names}
-                compareIdx={model.cIdx}
-                lineColor={model.paint.line}
-                bands={model.paint.bands}
-                hot={model.hot}
-                barGroup={model.barGroup}
-                partialColor={model.partialColor}
-                barColors={model.paint.barColors}
-                compareColor={model.comparePaint}
-                compareBands={model.compareBands}
-                latest={model.latest}
-                dataKey={model.dataKey}
-                onViewport={onViewport}
-                fonts={fonts}
-              />
-            )}
+            {chartBody(box.w, box.h)}
           </View>
         </View>
 
         <View className="gap-2 px-4">
-          {/* The legend: every series and line on the chart by name, then the compare (or the action that adds one). */}
-          <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
-            <LegendKey color={primaryColor} label={title} />
-            {model?.ref && model.goal && <LegendKey color={c["chart-cursor"]} label={model.goal.label} mark="dash" />}
-            {workouts && <LegendKey color={c.strain} label="Workouts" mark="block" />}
-            {(view === "sleep" || view === "spo2" || view === "hrv") && (dayVm?.stages.length ?? 0) > 0 && (["awake", "rem", "light", "deep"] as const).map((s) => <LegendKey key={s} color={stageColor[s]} label={STAGE_NAME[s]} mark="dot" />)}
-            {canCompare &&
-              (cmp ? (
-                <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel={`Stop comparing with ${compareName}`} onPress={() => (haptic.tap(), clearCompare())} className={cn(COMPARE, "shrink")}>
-                  <View style={{ width: 12, height: 3, borderRadius: 1.5, backgroundColor: model?.compareBands ? model.compareBands[model.compareBands.length - 1].color : (model?.comparePaint ?? c["chart-4"]) }} />
-                  <Text className={cn(LABEL, "shrink text-[11px] text-foreground-secondary")}>
-                    {compareName}
-                    {axes?.cStats?.avg != null && model?.compare ? (
-                      <Text className="text-muted-foreground">{` · avg ${valueText(axes.cStats.avg, model.compare.format, model.compare.unit)}`}</Text>
-                    ) : cmpEmpty ? (
-                      <Text className="text-muted-foreground">{" · none this day"}</Text>
-                    ) : null}
-                  </Text>
-                  <Icon icon={X} size={14} tone="muted-foreground" strokeWidth={2} />
-                </Press>
-              ) : (
-                <Press activeScale={0.96} accessibilityRole="button" accessibilityLabel="Compare with another metric" onPress={() => (haptic.tap(), pick("compare"))} className={COMPARE}>
-                  <Text className={cn(LABEL, "text-[13px]")}>Compare</Text>
-                  <Icon icon={Plus} size={16} tone="foreground" strokeWidth={2.25} />
-                </Press>
-              ))}
-          </View>
-          {(model?.shade || trend) && (
-            <Text className="text-[13px] leading-5 text-muted-foreground">{[model?.shade?.label, trend ? `Bold line: ${trendDays}-day average; dots: each day` : null].filter(Boolean).join(" · ")}</Text>
-          )}
+          {legend}
+          {caption}
         </View>
       </View>
     </View>

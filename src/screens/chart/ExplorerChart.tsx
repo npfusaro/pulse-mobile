@@ -1,5 +1,6 @@
-// The chart explorer's plot: one or two series over a viewport that pinches, pans (with momentum) and animates between
-// ranges, a crosshair with a readout, all on the UI thread. The series are built once in data space and mapped to the
+// The chart explorer's plot: a series and up to three to compare (fork: was one), each on its own scale, over a
+// viewport that pinches, pans (with momentum) and animates between ranges, a crosshair with a readout, all on the UI
+// thread. The series are built once in data space and mapped to the
 // screen each frame by one affine transform of the path (so strokes keep their width at any zoom); the axes, grid,
 // bands and labels are re-recorded as a Skia picture from the viewport. JS only hears about the viewport when a gesture
 // settles (to refit the y axis and the summary), never per frame.
@@ -81,17 +82,21 @@ export type ExplorerChartProps = {
    * raw: drawn bold as the line, the days behind it as dots and a faint trace. Null draws the primary as the line.
    */
   trend?: Series | null;
-  compare: Series | null;
+  /** The series to compare, each on its own scale (up to MAX_COMPARES); the first one's labels on the right axis. */
+  compares: Series[];
+  /** Each compare's trailing mean (as `trend`), or null. */
+  compareTrends: (Series | null)[];
   extent: { min: number; max: number; minSpan: number };
   /** The viewport JS last knew (the range's window, or where a gesture settled); a change animates there. */
   window: { start: number; span: number };
   /** The range's own window: a double tap glides back to it. */
   home: { start: number; span: number };
   domain: Domain;
-  domain2: Domain | null;
-  /** Tick text for `domain.ticks` and `domain2.ticks`. */
+  /** Each compare's scale, aligned to the primary's grid. */
+  domains2: Domain[];
+  /** Tick text for `domain.ticks`, and per compare for its `domains2` ticks. */
   yLabels: string[];
-  y2Labels: string[];
+  y2Labels: string[][];
   levels: TickLevel[];
   /** A shaded range [low, high] on the primary axis: the normal range, or the day's Strain Target. */
   baseline: [number, number] | null;
@@ -106,12 +111,15 @@ export type ExplorerChartProps = {
   bed: number | null;
   wake: number | null;
   now: number | null;
-  /** The readout's text per primary point (date, value, compare value, note), the value's colour, the compare dot's. */
-  readout: { dates: string[]; values: string[]; compares: string[]; notes: string[]; colors: string[]; compareColors: string[] | null };
+  /**
+   * The readout's text per primary point (date, value, each compare's value, note), the value's colour, and per
+   * compare its dot's colours (null: the compare's own colour).
+   */
+  readout: { dates: string[]; values: string[]; compares: string[][]; notes: string[]; colors: string[]; compareColors: (string[] | null)[] };
   /** The series' names, set before their values in the readout; a null name leaves the value alone (the header names it). */
-  names: { primary: string | null; compare: string | null } | null;
-  /** Per primary point, the compare point beside it (-1: none). */
-  compareIdx: number[];
+  names: { primary: string | null; compares: string[] } | null;
+  /** Per compare, per primary point, the compare point beside it (-1: none). */
+  compareIdx: number[][];
   lineColor: string;
   /** Colour bands for the primary series (recovery bands, stress levels, heart-rate zones): a gradient by value. */
   bands: Band[] | null;
@@ -122,9 +130,10 @@ export type ExplorerChartProps = {
   /** Today's running total's colour, drawn faded and outlined ("so far"); null when today has none. */
   partialColor: string | null;
   barColors: string[];
-  compareColor: string;
-  /** Colour bands for the compare line (heart-rate zones beside Day Strain); null draws it in `compareColor`. */
-  compareBands: Band[] | null;
+  /** Each compare's colour. */
+  compareColors: string[];
+  /** Per compare, colour bands for its line (heart-rate zones beside Day Strain); null draws it in its colour. */
+  compareBands: (Band[] | null)[];
   /** The primary's latest point, ringed and labelled with its value (Day Strain so far); null for none. */
   latest: { index: number; text: string } | null;
   /** Changes when the data changes: the viewport jumps (no animation) and the series draws in again. */
@@ -145,6 +154,10 @@ const LANES_TOP = 10;
 const LANES = LANES_TOP + 4 * LANE_H + 3 * LANE_GAP;
 const STAGE_ORDER = ["awake", "rem", "light", "deep"] as const;
 const MOVE_MS = 420;
+/** A right-axis column of tick labels, one per compare that has room (one in portrait, all three when wide). */
+const AXIS_COL = 42;
+/** At least this wide, every compare gets its own labelled column on the right. */
+const WIDE = 560;
 /** The x axis keeps its labels at least this far apart (a clock time or a date is about 30 px at 12 px): six months get monthly ticks. */
 const TICK_GAP = 42;
 
@@ -196,6 +209,69 @@ function paint(color: string, stroke?: { width: number; dash?: number[]; round?:
   return p;
 }
 
+type Geo = { LEFT: number; plotW: number; plotH: number; bottom: number };
+const EMPTY_PATH = Skia.Path.Make();
+
+/**
+ * One compare's scale, paths and crosshair dot (called for each of the MAX_COMPARES slots, filled or not, so the
+ * hooks keep their order). Its y axis animates to its window like the primary's.
+ */
+function useCompareSlot(i: number, p: ExplorerChartProps, start: SharedValue<number>, span: SharedValue<number>, idx: SharedValue<number>, glide: (sv: SharedValue<number>, to: number) => void, geo: Geo, fallback: string) {
+  const series = p.compares[i] ?? null;
+  const trend = p.compareTrends[i] ?? null;
+  const domain = p.domains2[i] ?? null;
+  const labels = p.y2Labels[i];
+  const { LEFT, plotW, plotH, bottom } = geo;
+  const lo = useSharedValue(domain?.lo ?? 0);
+  const hi = useSharedValue(domain?.hi ?? 1);
+  const ticks = useSharedValue((domain?.ticks ?? []).map((v, j) => ({ v, text: labels?.[j] ?? "" })));
+  // New data: the scale jumps into place (the primary's effect redraws the rest).
+  React.useEffect(() => {
+    if (!domain) return;
+    lo.set(domain.lo);
+    hi.set(domain.hi);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.dataKey]);
+  React.useEffect(() => {
+    if (!domain) return;
+    ticks.set(domain.ticks.map((v, j) => ({ v, text: labels?.[j] ?? "" })));
+    glide(lo, domain.lo);
+    glide(hi, domain.hi);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domain, labels]);
+
+  const paths = React.useMemo(() => dataPaths(series), [series]);
+  const tPaths = React.useMemo(() => (trend ? dataPaths(trend, paths) : null), [trend, paths]);
+  const m = useDerivedValue(() => {
+    const sx = plotW / span.value;
+    const sc = plotH / (hi.value - lo.value);
+    const k = (paths.hi - paths.lo) / 1000;
+    return [sx, 0, LEFT - start.value * sx, 0, -k * sc, bottom - (paths.lo - lo.value) * sc, 0, 0, 1];
+  });
+  const line = useDerivedValue(() => Skia.PathBuilder.MakeFromPath(paths.line).transform(m.value).detach());
+  const tLine = useDerivedValue(() => (tPaths ? Skia.PathBuilder.MakeFromPath(tPaths.line).transform(m.value).detach() : EMPTY_PATH));
+
+  const xs = series?.xs ?? [];
+  const ys = series?.ys ?? [];
+  const cidx = p.compareIdx[i] ?? [];
+  const on = useDerivedValue(() => (idx.value >= 0 ? (cidx[idx.value] ?? -1) : -1));
+  const dotX = useDerivedValue(() => (on.value < 0 ? -1000 : LEFT + ((xs[on.value] - start.value) / span.value) * plotW));
+  const dotY = useDerivedValue(() => {
+    const v = on.value < 0 ? null : ys[on.value];
+    return v === null || v === undefined ? -1000 : bottom - ((v - lo.value) / (hi.value - lo.value)) * plotH;
+  });
+  const color = p.compareColors[i] ?? fallback;
+  const colors = p.readout.compareColors[i] ?? null;
+  const dotColor = useDerivedValue(() => (on.value < 0 || !colors ? color : (colors[on.value] ?? color)));
+  const texts = p.readout.compares[i] ?? [];
+  const text = useDerivedValue(() => (idx.value < 0 ? "" : (texts[idx.value] ?? "")));
+  const bands = p.compareBands[i] ?? null;
+  const stops = React.useMemo(() => (series && bands ? bandStops(paths.hi, paths.lo, bands) : null), [series, bands, paths]);
+  const gStart = useDerivedValue(() => vec(0, bottom - ((paths.hi - lo.value) / (hi.value - lo.value)) * plotH));
+  const gEnd = useDerivedValue(() => vec(0, bottom - ((paths.lo - lo.value) / (hi.value - lo.value)) * plotH + 0.01));
+  return { series, trend: !!tPaths, lo, hi, ticks, line, tLine, dotX, dotY, dotColor, text, color, stops, gStart, gEnd };
+}
+
 export function ExplorerChart(p: ExplorerChartProps) {
   const { c } = useTheme();
   const k = React.useMemo(() => inkOf(c), [c]);
@@ -213,7 +289,10 @@ export function ExplorerChart(p: ExplorerChartProps) {
 
   // --- Layout: the night's lanes need room for their names; a day names its stretches in a lane over the plot ---
   const LEFT = p.stages.length ? Math.max(BASE_LEFT, Math.ceil(laneW) + 14) : BASE_LEFT;
-  const right = p.compare ? 48 : 14;
+  const nCmp = p.compares.length;
+  // One labelled column on the right per compare that has room: the first in portrait, every one when wide.
+  const axisCols = nCmp ? Math.min(nCmp, width >= WIDE ? nCmp : 1) : 0;
+  const right = nCmp ? 6 + axisCols * AXIS_COL : 14;
   const plotW = Math.max(1, width - LEFT - right);
   const lanes = p.stages.length ? LANES : 0;
   const named = p.mode === "day" && (p.spans.length > 0 || p.bed !== null || p.wake !== null);
@@ -227,8 +306,6 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const span = useSharedValue(p.window.span);
   const lo = useSharedValue(p.domain.lo);
   const hi = useSharedValue(p.domain.hi);
-  const lo2 = useSharedValue(p.domain2?.lo ?? 0);
-  const hi2 = useSharedValue(p.domain2?.hi ?? 1);
   const homeStart = useSharedValue(p.home.start);
   const homeSpan = useSharedValue(p.home.span);
   const cursor = useSharedValue(NaN);
@@ -237,7 +314,6 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const focal = useSharedValue(0);
   const progress = useSharedValue(0);
   const yTicks = useSharedValue(p.domain.ticks.map((v, i) => ({ v, text: p.yLabels[i] ?? "" })));
-  const y2Ticks = useSharedValue((p.domain2?.ticks ?? []).map((v, i) => ({ v, text: p.y2Labels[i] ?? "" })));
 
   const timing = { duration: MOVE_MS, easing: Easing.out(Easing.cubic) };
   const glide = (sv: typeof start, to: number) => {
@@ -254,10 +330,6 @@ export function ExplorerChart(p: ExplorerChartProps) {
     span.set(p.window.span);
     lo.set(p.domain.lo);
     hi.set(p.domain.hi);
-    if (p.domain2) {
-      lo2.set(p.domain2.lo);
-      hi2.set(p.domain2.hi);
-    }
     cursor.set(NaN);
     if (reduce) progress.set(1);
     else {
@@ -286,19 +358,11 @@ export function ExplorerChart(p: ExplorerChartProps) {
     glide(hi, p.domain.hi);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.domain, p.yLabels]);
-  React.useEffect(() => {
-    if (!p.domain2) return;
-    y2Ticks.set(p.domain2.ticks.map((v, i) => ({ v, text: p.y2Labels[i] ?? "" })));
-    glide(lo2, p.domain2.lo);
-    glide(hi2, p.domain2.hi);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.domain2, p.y2Labels]);
 
   // --- Series geometry (data space, built once per series) ---
   const prim = React.useMemo(() => dataPaths(p.primary), [p.primary]);
   // The trend on the primary's scale, so one matrix maps both.
   const trendPaths = React.useMemo(() => (p.trend ? dataPaths(p.trend, prim) : null), [p.trend, prim]);
-  const comp = React.useMemo(() => dataPaths(p.compare), [p.compare]);
   // The workouts day: the minutes inside a workout as a series of their own, on the primary's scale.
   const hotPaths = React.useMemo(
     () => (p.hot && p.hot.some(Boolean) ? dataPaths({ ...p.primary, sparse: false, ys: p.primary.ys.map((y, i) => (p.hot![i] ? y : null)) }, prim) : null),
@@ -321,7 +385,16 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const trendArea = useDerivedValue(() => (trendPaths ? Skia.PathBuilder.MakeFromPath(trendPaths.area).transform(lineM.value).detach() : empties[3]));
   const hotLine = useDerivedValue(() => (hotPaths ? Skia.PathBuilder.MakeFromPath(hotPaths.line).transform(lineM.value).detach() : empties[0]));
   const hotArea = useDerivedValue(() => (hotPaths ? Skia.PathBuilder.MakeFromPath(hotPaths.area).transform(lineM.value).detach() : empties[0]));
-  const line2 = useDerivedValue(() => Skia.PathBuilder.MakeFromPath(comp.line).transform(toScreen(start.value, span.value, lo2.value, hi2.value, comp.lo, comp.hi)).detach());
+  // The crosshair's primary point (the compares find theirs beside it).
+  const xs0 = p.primary.xs;
+  const ys0 = p.primary.ys;
+  const idx = useDerivedValue(() => (Number.isNaN(cursor.value) ? -1 : nearestValued(xs0, ys0, cursor.value)));
+  // The compares: three slots, filled in order.
+  const geo = { LEFT, plotW, plotH, bottom };
+  const slot0 = useCompareSlot(0, p, start, span, idx, glide, geo, c["chart-4"]);
+  const slot1 = useCompareSlot(1, p, start, span, idx, glide, geo, c["chart-2"]);
+  const slot2 = useCompareSlot(2, p, start, span, idx, glide, geo, c["chart-1"]);
+  const slots = [slot0, slot1, slot2].slice(0, nCmp);
 
   const isBar = p.primary.mark === "bar";
   const barW8 = useDerivedValue(() => (isBar ? barsWeight(span.value) : 0));
@@ -375,9 +448,6 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const stops = React.useMemo(() => (p.bands ? bandStops(prim.hi, prim.lo, p.bands) : null), [p.bands, prim]);
   const gStart = useDerivedValue(() => vec(0, bottom - ((prim.hi - lo.value) / (hi.value - lo.value)) * plotH));
   const gEnd = useDerivedValue(() => vec(0, bottom - ((prim.lo - lo.value) / (hi.value - lo.value)) * plotH + 0.01));
-  const stops2 = React.useMemo(() => (p.compare && p.compareBands ? bandStops(comp.hi, comp.lo, p.compareBands) : null), [p.compare, p.compareBands, comp]);
-  const g2Start = useDerivedValue(() => vec(0, bottom - ((comp.hi - lo2.value) / (hi2.value - lo2.value)) * plotH));
-  const g2End = useDerivedValue(() => vec(0, bottom - ((comp.lo - lo2.value) / (hi2.value - lo2.value)) * plotH + 0.01));
   // The series stay inside the plot (the bars' rounded feet run under its floor).
   const clip = React.useMemo(() => rect(LEFT, top - 6, plotW, plotH + 6), [LEFT, top, plotW, plotH]);
 
@@ -389,7 +459,7 @@ export function ExplorerChart(p: ExplorerChartProps) {
       grid: paint(k.grid, { width: 1, dash: [3, 4] }),
       band: paint(alpha(p.bands ? k.ink : p.lineColor, p.bands ? 0.05 : 0.09)),
       text: paint(k.axis),
-      text2: paint(p.compareColor),
+      text2: [0, 1, 2].map((i) => paint(p.compareColors[i] ?? k.axis)),
       goal: paint(k.guide, { width: 1.5, dash: [3, 5], round: true }),
       pill: paint(k.pill),
       pillText: paint(k.sub),
@@ -406,7 +476,7 @@ export function ExplorerChart(p: ExplorerChartProps) {
       stage: { awake: paint(c["stage-awake"]), rem: paint(c["stage-rem"]), light: paint(c["stage-light"]), deep: paint(c["stage-deep"]) },
       block: { awake: paint(alpha(c["stage-awake"], 0.85)), rem: paint(alpha(c["stage-rem"], 0.85)), light: paint(alpha(c["stage-light"], 0.85)), deep: paint(alpha(c["stage-deep"], 0.85)) },
     }),
-    [c, k, p.compareColor, p.bands, p.lineColor, workoutsFirst],
+    [c, k, p.compareColors, p.bands, p.lineColor, workoutsFirst],
   );
   const levels = p.levels;
   const baseline = p.baseline;
@@ -414,7 +484,16 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const spans = p.spans;
   const stages = p.stages;
   const now = p.now;
-  const hasCompare = !!p.compare;
+  // The compares' scales, by name, for the worklets below (shared values captured one by one).
+  const lo2a = slot0.lo;
+  const hi2a = slot0.hi;
+  const t2a = slot0.ticks;
+  const lo2b = slot1.lo;
+  const hi2b = slot1.hi;
+  const t2b = slot1.ticks;
+  const lo2c = slot2.lo;
+  const hi2c = slot2.hi;
+  const t2c = slot2.ticks;
   const plotRight = LEFT + plotW;
   // The stretches' names (a workout's with its length on the workouts day), the night's bed and wake, the latest value.
   const spanText = React.useMemo(
@@ -489,16 +568,17 @@ export function ExplorerChart(p: ExplorerChartProps) {
           if (y < top - 0.5 || y > bottom + 0.5) continue;
           canvas.drawText(t.text, LEFT - 8 - axisFont.getTextWidth(t.text), y + 12 * 0.32, paints.text, axisFont);
         }
-        // Right axis (compare), in the compare colour
-        if (hasCompare) {
-          const l2 = lo2.value;
-          const h2 = hi2.value;
-          for (const t of y2Ticks.value) {
+        // Right axis: a column per compare that has room, each in its compare's colour
+        const axis2 = (ticks: { v: number; text: string }[], l2: number, h2: number, col: number, pt: SkPaint) => {
+          for (const t of ticks) {
             const y = bottom - ((t.v - l2) / (h2 - l2)) * plotH;
             if (y < top - 0.5 || y > bottom + 0.5) continue;
-            canvas.drawText(t.text, plotRight + 8, y + 12 * 0.32, paints.text2, axisFont);
+            canvas.drawText(t.text, plotRight + 8 + col * AXIS_COL, y + 12 * 0.32, pt, axisFont);
           }
-        }
+        };
+        if (axisCols > 0) axis2(t2a.value, lo2a.value, hi2a.value, 0, paints.text2[0]);
+        if (axisCols > 1) axis2(t2b.value, lo2b.value, hi2b.value, 1, paints.text2[1]);
+        if (axisCols > 2) axis2(t2c.value, lo2c.value, hi2c.value, 2, paints.text2[2]);
         // Bottom axis: the finest tick level that leaves room for its labels
         const lv = pickLevel(levels, sp, plotW, TICK_GAP);
         if (lv >= 0) {
@@ -614,20 +694,10 @@ export function ExplorerChart(p: ExplorerChartProps) {
   );
 
   // --- The crosshair (the cursor is in data x, so it rides along with a pan or a zoom) ---
-  const cxs = p.compare?.xs ?? [];
-  const cys = p.compare?.ys ?? [];
-  const cidx = p.compareIdx;
-  const idx = useDerivedValue(() => (Number.isNaN(cursor.value) ? -1 : nearestValued(xs, ys, cursor.value)));
   const dotX = useDerivedValue(() => (idx.value < 0 ? -1000 : LEFT + ((xs[idx.value] - start.value) / span.value) * plotW));
   const dotY = useDerivedValue(() => {
     const v = idx.value < 0 ? null : ys[idx.value];
     return v === null || v === undefined ? -1000 : bottom - ((v - lo.value) / (hi.value - lo.value)) * plotH;
-  });
-  const cOn = useDerivedValue(() => (idx.value >= 0 ? (cidx[idx.value] ?? -1) : -1));
-  const dot2X = useDerivedValue(() => (cOn.value < 0 ? -1000 : LEFT + ((cxs[cOn.value] - start.value) / span.value) * plotW));
-  const dot2Y = useDerivedValue(() => {
-    const v = cOn.value < 0 ? null : cys[cOn.value];
-    return v === null || v === undefined ? -1000 : bottom - ((v - lo2.value) / (hi2.value - lo2.value)) * plotH;
   });
   const shown = useDerivedValue(() => (idx.value >= 0 && dotX.value >= LEFT - 1 && dotX.value <= plotRight + 1 ? 1 : 0));
   const vTop = useDerivedValue(() => vec(dotX.value, top));
@@ -638,9 +708,6 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const readoutColors = p.readout.colors;
   const dotColor = useDerivedValue(() => (idx.value < 0 ? fg : (readoutColors[idx.value] ?? fg)));
   const halo = useDerivedValue(() => (idx.value < 0 ? "transparent" : (readoutColors[idx.value] ?? fg)));
-  const compareColor = p.compareColor;
-  const compareColors = p.readout.compareColors;
-  const dot2Color = useDerivedValue(() => (cOn.value < 0 || !compareColors ? compareColor : (compareColors[cOn.value] ?? compareColor)));
   // The inspected day: TrendChart's faint column behind its bar, the day's whole band, the plot's full height.
   const selBar = useDerivedValue(() => {
     const i = idx.value;
@@ -766,19 +833,19 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const names = p.names;
   // Each series' name sits before its value: the values start this far in (name and a gap).
   const nameW = React.useMemo(
-    () => ({ primary: names?.primary ? measure(seriesFont, names.primary) + 6 : 0, compare: names?.compare ? measure(seriesFont, names.compare) + 6 : 0 }),
+    () => ({ primary: names?.primary ? measure(seriesFont, names.primary) + 6 : 0, compares: [0, 1, 2].map((j) => (names?.compares[j] ? measure(seriesFont, names.compares[j]) + 6 : 0)) }),
     [names, seriesFont],
   );
   // Each line measured once per text array (the notes change when a gesture settles; the rest with the data).
   const datesW = React.useMemo(() => r.dates.map((t) => measure(dateFont, t)), [r.dates, dateFont]);
   const valuesW = React.useMemo(() => r.values.map((t) => measure(valueFont, t)), [r.values, valueFont]);
-  const comparesW = React.useMemo(() => r.compares.map((t) => measure(compareFont, t)), [r.compares, compareFont]);
+  const comparesW = React.useMemo(() => r.compares.map((arr) => arr.map((t) => measure(compareFont, t))), [r.compares, compareFont]);
   const notesW = React.useMemo(() => r.notes.map((t) => measure(noteFont, t)), [r.notes, noteFont]);
   const box = React.useMemo(() => {
     const notes = r.notes.some(Boolean);
-    const widths = datesW.map((w, i) => Math.max(w, nameW.primary + (valuesW[i] ?? 0), hasCompare ? nameW.compare + (comparesW[i] ?? 0) : 0, notesW[i] ?? 0) + 20);
-    return { widths, height: 10 + 16 + 22 + (hasCompare ? 18 : 0) + (notes ? 16 : 0) + 6 };
-  }, [r.notes, datesW, valuesW, comparesW, notesW, hasCompare, nameW]);
+    const widths = datesW.map((w, i) => Math.max(w, nameW.primary + (valuesW[i] ?? 0), ...comparesW.slice(0, nCmp).map((arr, j) => nameW.compares[j] + (arr[i] ?? 0)), notesW[i] ?? 0) + 20);
+    return { widths, height: 10 + 16 + 22 + 18 * nCmp + (notes ? 16 : 0) + 6 };
+  }, [r.notes, datesW, valuesW, comparesW, notesW, nCmp, nameW]);
   const boxW = useDerivedValue(() => (idx.value < 0 ? 0 : (box.widths[idx.value] ?? 0)));
   const boxX = useDerivedValue(() => {
     const w = boxW.value;
@@ -787,20 +854,22 @@ export function ExplorerChart(p: ExplorerChartProps) {
   });
   const textX = useDerivedValue(() => boxX.value + 10);
   const valueX = useDerivedValue(() => textX.value + nameW.primary);
-  const compareX = useDerivedValue(() => textX.value + nameW.compare);
+  const cX0 = useDerivedValue(() => textX.value + nameW.compares[0]);
+  const cX1 = useDerivedValue(() => textX.value + nameW.compares[1]);
+  const cX2 = useDerivedValue(() => textX.value + nameW.compares[2]);
+  const compareXs = [cX0, cX1, cX2];
   const dateText = useDerivedValue(() => (idx.value < 0 ? "" : (r.dates[idx.value] ?? "")));
   const valueText = useDerivedValue(() => (idx.value < 0 ? "" : (r.values[idx.value] ?? "")));
-  const compareText = useDerivedValue(() => (idx.value < 0 ? "" : (r.compares[idx.value] ?? "")));
   const noteText = useDerivedValue(() => (idx.value < 0 ? "" : (r.notes[idx.value] ?? "")));
   const boxTop = top + 4;
   const valueY = boxTop + 10 + 16 + 17;
-  const compareY = boxTop + 10 + 16 + 22 + 12;
-  const noteY = compareY + (hasCompare ? 18 : 0);
+  const compareY = (j: number) => boxTop + 10 + 16 + 22 + 12 + 18 * j;
+  const noteY = compareY(nCmp);
 
   return (
     <View style={{ width, height }}>
       <GestureDetector gesture={gesture}>
-        <View style={{ width, height }} accessible accessibilityRole="image" accessibilityLabel={`${p.primary.label}${p.compare ? ` with ${p.compare.label}` : ""}. Pinch to zoom, drag to pan, hold to inspect a point.`}>
+        <View style={{ width, height }} accessible accessibilityRole="image" accessibilityLabel={`${p.primary.label}${nCmp ? ` with ${p.compares.map((x) => x.label).join(", ")}` : ""}. Pinch to zoom, drag to pan, hold to inspect a point.`}>
           {/* The chart draws in by a native wipe (the canvas is not redrawn for it); the crosshair is a canvas of its own,
               so inspecting a point never redraws the series. */}
           <NativeReveal progress={progress} width={width} height={height}>
@@ -861,10 +930,20 @@ export function ExplorerChart(p: ExplorerChartProps) {
                     )}
                   </Group>
                 )}
-                {p.compare && (
-                  <Path path={line2} style="stroke" strokeWidth={LINE.thin} strokeJoin="round" strokeCap="round" color={p.compareColor} opacity={stops2 ? 0.9 : 1}>
-                    {stops2 && <LinearGradient start={g2Start} end={g2End} colors={stops2.map((s) => s.color)} positions={stops2.map((s) => s.offset)} />}
-                  </Path>
+                {/* The compares, each on its own scale: many days on show draw its days faint and its trailing average bold. */}
+                {slots.map((sl, j) =>
+                  sl.trend ? (
+                    <Group key={j}>
+                      <Path path={sl.line} style="stroke" strokeWidth={1} strokeJoin="round" strokeCap="round" color={alpha(sl.color, 0.3)} />
+                      <Path path={sl.tLine} style="stroke" strokeWidth={LINE.thin + 0.5} strokeJoin="round" strokeCap="round" color={sl.color}>
+                        {sl.stops && <LinearGradient start={sl.gStart} end={sl.gEnd} colors={sl.stops.map((s) => s.color)} positions={sl.stops.map((s) => s.offset)} />}
+                      </Path>
+                    </Group>
+                  ) : (
+                    <Path key={j} path={sl.line} style="stroke" strokeWidth={LINE.thin} strokeJoin="round" strokeCap="round" color={sl.color} opacity={sl.stops ? 0.9 : 1}>
+                      {sl.stops && <LinearGradient start={sl.gStart} end={sl.gEnd} colors={sl.stops.map((s) => s.color)} positions={sl.stops.map((s) => s.offset)} />}
+                    </Path>
+                  ),
                 )}
               </Group>
               <Picture picture={over} />
@@ -883,19 +962,23 @@ export function ExplorerChart(p: ExplorerChartProps) {
               <Circle cx={dotX} cy={dotY} r={12} color={halo} opacity={0.16} />
               <Circle cx={dotX} cy={dotY} r={8} color={k.scrubRing} />
               <Circle cx={dotX} cy={dotY} r={5} color={dotColor} />
-              {p.compare && (
-                <Group>
-                  <Circle cx={dot2X} cy={dot2Y} r={7} color={k.scrubRing} />
-                  <Circle cx={dot2X} cy={dot2Y} r={4.5} color={dot2Color} />
+              {slots.map((sl, j) => (
+                <Group key={j}>
+                  <Circle cx={sl.dotX} cy={sl.dotY} r={7} color={k.scrubRing} />
+                  <Circle cx={sl.dotX} cy={sl.dotY} r={4.5} color={sl.dotColor} />
                 </Group>
-              )}
+              ))}
               <RoundedRect x={boxX} y={boxTop} width={boxW} height={box.height} r={12} color={k.readout} />
               <RoundedRect x={boxX} y={boxTop} width={boxW} height={box.height} r={12} color={k.readoutEdge} style="stroke" strokeWidth={1} />
               <SkText x={textX} y={boxTop + 10 + 12} text={dateText} font={dateFont} color={k.sub} />
               {names?.primary ? <SkText x={textX} y={valueY} text={names.primary} font={seriesFont} color={k.sub} /> : null}
               <SkText x={valueX} y={valueY} text={valueText} font={valueFont} color={dotColor} />
-              {hasCompare && names?.compare ? <SkText x={textX} y={compareY} text={names.compare} font={seriesFont} color={k.sub} /> : null}
-              {hasCompare && <SkText x={compareX} y={compareY} text={compareText} font={compareFont} color={p.compareColor} />}
+              {slots.map((sl, j) => (
+                <Group key={j}>
+                  {names?.compares[j] ? <SkText x={textX} y={compareY(j)} text={names.compares[j]} font={seriesFont} color={k.sub} /> : null}
+                  <SkText x={compareXs[j]} y={compareY(j)} text={sl.text} font={compareFont} color={sl.color} />
+                </Group>
+              ))}
               <SkText x={textX} y={noteY} text={noteText} font={noteFont} color={k.sub} />
             </Group>
           </Canvas>
