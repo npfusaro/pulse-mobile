@@ -436,11 +436,11 @@ export type BloodOxygenVM = {
    * slow sag with the heart quiet) and the minutes they and the flat dips cover; the stretches with no reading at
    * all (the band dropped the minutes, an arm slept on hard being the usual reason) and their minutes.
    */
-  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; gaps: SignalGap[]; gapMin: number }>;
+  night: Metric<NightSpo2 & { low: { t: number; v: number }; readMin: number; /** The share of the sleep with no reading, % (bloodOxygen.ts noDataPct). */ noDataPct: number | null; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; gaps: SignalGap[]; gapMin: number }>;
   /** Where the average stands against 95–100, the range Fitbit and the Health Monitor use; null without an average. */
   chip: { tone: ChipTone; text: string } | null;
-  /** The seven nights ending on `day`, oldest first; nulls where the band read nothing. */
-  nights: { day: string; average: number | null; low: number | null; below95Min: number | null }[];
+  /** The seven nights ending on `day`, oldest first; nulls where the band read nothing. `noDataPct`: the share unread. */
+  nights: { day: string; average: number | null; low: number | null; below95Min: number | null; noDataPct: number | null }[];
 };
 
 export type MonitorVM = {

@@ -296,7 +296,13 @@ export default function ChartExplorer() {
     const y2Labels = domain2 && model.compare ? domain2.ticks.map(tickText(model.compare.format)) : [];
     // Each point against the normal range, else the goal, else the window's average (a day view's own note first).
     const basis = { baseline: model.baseline, goal: model.goal && model.personalGoal && !model.baseline ? model.goal.y : null, average: stats.avg };
-    const notes = model.primary.ys.map((y, i) => (model.primary.partial?.[i] ? "So far today" : (model.viewNotes?.[i] ?? noteFor(y, format, unit, basis))));
+    // Blood oxygen's nights also say how much of the sleep had no reading: an outlier from a few good minutes shows as one.
+    const noData = mode === "daily" ? dailyVm?.noData : undefined;
+    const notes = model.primary.ys.map((y, i) => {
+      const note = model.primary.partial?.[i] ? "So far today" : (model.viewNotes?.[i] ?? noteFor(y, format, unit, basis));
+      const nd = noData?.[i];
+      return nd == null ? note : [note, `${nd}% no data`].filter(Boolean).join(" · ");
+    });
     return { from, to, domain, domain2, stats, running, cStats, yLabels, y2Labels, notes };
   }, [model, v?.start, v?.span, format, unit]); // eslint-disable-line react-hooks/exhaustive-deps
   const readout = React.useMemo(() => (model && axes ? { dates: model.dates, values: model.values, compares: model.compares, notes: axes.notes, colors: model.colors, compareColors: model.compareColors } : null), [model, axes]);

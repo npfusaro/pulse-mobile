@@ -31,14 +31,19 @@ const GOOGLE_SETTINGS = "/settings?s=source";
 /** Nearly every night dips under 95% for a minute, so only a low under 90% or half an hour under 95% is toned. */
 const LOW_NOTABLE = 90;
 const UNDER_NOTABLE_MIN = 30;
+/** A night with this much of its sleep unread is one to doubt: its share is toned and its numbers dimmed. */
+const NO_DATA_NOTABLE = 40;
+/** The week's nights: "Sun 18" (the week is seven days running, so the month adds nothing but width). */
+const NIGHT_DAY: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric" };
 
-/** The night's average over its low, its minutes under 95% and how many minutes the band read. */
+/** The night's average over its low, its minutes under 95% and how much of the sleep had no reading. */
 function Hero({ vm }: { vm: BloodOxygenVM }) {
   const n = vm.night.value;
+  const nd = n?.noDataPct ?? null;
   const stats = [
     { label: "Low", value: n ? `${n.low.v}` : MISSING, spoken: n ? `${n.low.v} percent` : "no readings" },
     { label: "Under 95%", value: n ? `${n.below95Min}` : MISSING, unit: "min", spoken: n ? `${n.below95Min} minutes` : "no readings" },
-    { label: "Readings", value: n ? `${n.readMin}` : MISSING, spoken: n ? `${n.readMin} minutes read` : "no readings" },
+    { label: "No data", value: nd !== null ? `${nd}` : MISSING, unit: "%", spoken: nd !== null ? `${nd} percent of the sleep with no reading` : "not known", tone: nd !== null && nd >= NO_DATA_NOTABLE ? "text-warning-text" : "" },
   ];
   const big = "font-numeric text-[64px] font-bold leading-[64px] tracking-[-0.02em]";
   const unit = "text-xl font-semibold leading-7 text-foreground-secondary";
@@ -69,9 +74,9 @@ function Hero({ vm }: { vm: BloodOxygenVM }) {
       <View className="mt-4 w-full flex-row gap-3">
         {stats.map((s) => (
           <View key={s.label} accessible accessibilityLabel={`${s.label}: ${s.spoken}`} className="flex-1 items-center">
-            <Text accessibilityElementsHidden className="font-numeric text-xl font-bold leading-6 tabular-nums">
+            <Text accessibilityElementsHidden className={cn("font-numeric text-xl font-bold leading-6 tabular-nums", "tone" in s && s.tone)}>
               {s.value}
-              {s.unit && s.value !== MISSING && <Text className="text-sm font-semibold text-foreground-secondary"> {s.unit}</Text>}
+              {s.unit && s.value !== MISSING && <Text className="text-sm font-semibold text-foreground-secondary">{s.unit === "%" ? "%" : ` ${s.unit}`}</Text>}
             </Text>
             <Text accessibilityElementsHidden className={cn(LABEL, "mt-1 text-muted-foreground")}>
               {s.label}
@@ -138,29 +143,33 @@ function Week({ vm, today }: { vm: BloodOxygenVM; today: string }) {
     <View>
       <View className="flex-row items-end pb-2">
         <Text className={cn(HEAD, "flex-1")}>Night</Text>
-        <Text className={cn(HEAD, "w-16 text-right")}>Average</Text>
+        <Text className={cn(HEAD, "w-14 text-right")}>Avg</Text>
         <Text className={cn(HEAD, "w-14 text-right")}>Low</Text>
-        <Text className={cn(HEAD, "w-20 text-right")}>Under 95%</Text>
-        <View className="w-6" />
+        <Text className={cn(HEAD, "w-14 text-right")}>Min {"<"}95</Text>
+        <Text className={cn(HEAD, "w-14 text-right")}>No data</Text>
+        <View className="w-4" />
       </View>
       {vm.nights.map((n) => {
         const current = n.day === vm.day;
         const lowTone = n.low !== null && n.low < LOW_NOTABLE;
         const underTone = n.below95Min !== null && n.below95Min >= UNDER_NOTABLE_MIN;
+        // A night mostly unread has an average built from its best stretches: its numbers are dimmed, its share toned.
+        const thin = n.noDataPct !== null && n.noDataPct >= NO_DATA_NOTABLE;
         return (
           <Press
             key={n.day}
             accessibilityRole="link"
-            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}, low ${n.low ?? "none"}, ${n.below95Min ?? 0} minutes under 95 percent`}
+            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}, low ${n.low ?? "none"}, ${n.below95Min ?? 0} minutes under 95 percent${n.noDataPct !== null ? `, ${n.noDataPct} percent of the sleep with no reading` : ""}`}
             onPress={() => push(dayHref(HREF, n.day, today))}
             className="flex-row items-center border-t border-border py-2.5"
           >
-            <Text className={cn("flex-1 text-[15px] leading-5", current ? "font-bold" : "font-medium text-foreground-secondary")}>{n.day === today ? "Last night" : formatDay(n.day, DAY.short)}</Text>
-            <Text className={cn(CELL, "w-16 text-right")}>{n.average !== null ? `${n.average.toFixed(1)}%` : MISSING}</Text>
-            <Text className={cn(CELL, "w-14 text-right", lowTone && "text-warning-text")}>{n.low !== null ? `${n.low}%` : MISSING}</Text>
-            <Text className={cn(CELL, "w-20 text-right", underTone ? "text-warning-text" : "text-foreground-secondary")}>{n.below95Min !== null ? `${n.below95Min} min` : MISSING}</Text>
-            <View className="w-6 items-end">
-              <Icon icon={ChevronRight} size={16} tone="muted-foreground" strokeWidth={2} />
+            <Text className={cn("flex-1 text-[15px] leading-5", current ? "font-bold" : "font-medium text-foreground-secondary")}>{n.day === today ? "Last night" : formatDay(n.day, NIGHT_DAY)}</Text>
+            <Text className={cn(CELL, "w-14 text-right", thin && "text-foreground-secondary")}>{n.average !== null ? `${n.average.toFixed(1)}%` : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right", lowTone ? (thin ? "text-foreground-secondary" : "text-warning-text") : thin && "text-foreground-secondary")}>{n.low !== null ? `${n.low}%` : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right", underTone && !thin ? "text-warning-text" : "text-foreground-secondary")}>{n.below95Min !== null ? `${n.below95Min}` : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right", thin ? "text-warning-text" : "text-foreground-secondary")}>{n.noDataPct !== null ? `${n.noDataPct}%` : MISSING}</Text>
+            <View className="w-4 items-end">
+              <Icon icon={ChevronRight} size={14} tone="muted-foreground" strokeWidth={2} />
             </View>
           </Press>
         );
@@ -220,7 +229,7 @@ export function BloodOxygenScreen() {
               >
                 <Events vm={vm} />
               </SectionShell>,
-              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average as Fitbit gives it, its lowest minute and how many minutes sat under 95%. Tap a night to see it." }}>
+              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average as Fitbit gives it, its lowest minute, how many minutes sat under 95%, and how much of the sleep had no reading at all. Fitbit drops the minutes it cannot read with confidence, so a night with a large share missing (40% or more, toned) has an average built from its best stretches only: treat it as the first to doubt. Tap a night to see it." }}>
                 <Week vm={vm} today={today} />
               </SectionShell>,
             ]
@@ -282,7 +291,7 @@ function BloodOxygenLoading() {
           <SkeletonText lh={64} fs={64} className="w-[130px]" />
           <SkeletonText className="w-28" />
           <View className="mt-4 w-full flex-row gap-3">
-            {["Low", "Under 95%", "Readings"].map((w) => (
+            {["Low", "Under 95%", "No data"].map((w) => (
               <View key={w} className="flex-1 items-center">
                 <SkeletonText lh={24} fs={20} className="w-[42px]" />
                 <Text className={cn(LABEL, "mt-1 text-muted-foreground")}>{w}</Text>

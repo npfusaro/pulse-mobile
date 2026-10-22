@@ -11,6 +11,16 @@ import type { BloodOxygenVM, HealthHubVM, NightSpo2, TimePoint } from "./types";
 
 /** Readings strictly under this count as low, the way Fitbit and the Health Monitor flag them ("Below 95%"). */
 export const SPO2_LOW_PCT = 95;
+
+/**
+ * The share of a night's sleep the band kept no reading for, whole percent: 1 − readings ÷ minutes asleep, clamped
+ * to 0–100; null without minutes asleep. Fitbit drops the minutes it cannot read with confidence, so a night with a
+ * large share missing has an average built from its best stretches only, and is the first to doubt as an outlier.
+ */
+export function noDataPct(readMin: number, asleepMin: number | null | undefined): number | null {
+  if (!asleepMin || asleepMin <= 0) return null;
+  return Math.min(100, Math.max(0, Math.round(100 * (1 - readMin / asleepMin))));
+}
 const PAD_S = 15 * 60;
 
 /**
@@ -30,10 +40,10 @@ export async function nightSpo2Of(ctx: QueryCtx, start: number, end: number): Pr
   return { bed: ms(start), wake: ms(end), points, hr: hr.value?.points ?? null, samples };
 }
 
-type NightStats = { readMin: number; mean: number; low: { t: number; v: number }; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; gaps: SignalGap[]; gapMin: number };
+type NightStats = { readMin: number; noDataPct: number | null; mean: number; low: { t: number; v: number }; below95Min: number; dips: Spo2Dip[]; dipSummary: Spo2DipSummary; arm: ArmStretch[]; armMin: number; gaps: SignalGap[]; gapMin: number };
 
 /** A main sleep's readings summarised, its dips judged by the heart's answer; null when the band kept none for it. */
-async function spo2Stats(ctx: QueryCtx, main: { start: number; end: number }): Promise<(NightStats & { night: NightSpo2 }) | null> {
+async function spo2Stats(ctx: QueryCtx, main: { start: number; end: number; asleepMin: number }): Promise<(NightStats & { night: NightSpo2 }) | null> {
   const night = await nightSpo2Of(ctx, main.start, main.end);
   const inNight = night.samples.filter((x) => x.ts >= main.start && x.ts < main.end);
   if (!inNight.length) return null;
@@ -44,6 +54,7 @@ async function spo2Stats(ctx: QueryCtx, main: { start: number; end: number }): P
   return {
     night: { bed: night.bed, wake: night.wake, points: night.points, hr: night.hr },
     readMin: inNight.length,
+    noDataPct: noDataPct(inNight.length, main.asleepMin),
     mean: Math.round((inNight.reduce((a, x) => a + x.pct, 0) / inNight.length) * 10) / 10,
     low: { t: ms(low.ts), v: low.pct },
     below95Min: inNight.filter((x) => x.pct < SPO2_LOW_PCT).length,
@@ -93,9 +104,9 @@ export async function getBloodOxygen(day: string, ctx: QueryCtx): Promise<BloodO
     isToday,
     connected,
     average: finite(tonight.average) ? ok(tonight.average) : none(noNight),
-    night: st ? ok({ ...st.night, low: st.low, readMin: st.readMin, below95Min: st.below95Min, dips: st.dips, dipSummary: st.dipSummary, arm: st.arm, armMin: st.armMin, gaps: st.gaps, gapMin: st.gapMin }) : none(tonight.main ? "no_data" : noNight),
+    night: st ? ok({ ...st.night, low: st.low, readMin: st.readMin, noDataPct: st.noDataPct, below95Min: st.below95Min, dips: st.dips, dipSummary: st.dipSummary, arm: st.arm, armMin: st.armMin, gaps: st.gaps, gapMin: st.gapMin }) : none(tonight.main ? "no_data" : noNight),
     chip: spo2Chip(tonight.average),
-    nights: week.map((n) => ({ day: n.day, average: n.average, low: n.stats?.low.v ?? null, below95Min: n.stats?.below95Min ?? null })),
+    nights: week.map((n) => ({ day: n.day, average: n.average, low: n.stats?.low.v ?? null, below95Min: n.stats?.below95Min ?? null, noDataPct: n.stats?.noDataPct ?? null })),
   };
 }
 

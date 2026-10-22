@@ -144,6 +144,11 @@ is higher than the plain mean of the minutes it serves, so heavy pressure on the
 lighter pressure survives as a low reading; an "average without the arm" from the served minutes is therefore not
 comparable with Fitbit's and is not shown. Counts, not a diagnosis.
 
+Each night also says how much of the sleep had **no reading**: 1 − readings ÷ minutes asleep. A night mostly unread
+has an average built from its best stretches only, which is what an outlier on the long trend usually is: the
+week's table tones the share at 40% and dims that night's numbers, and the explorer's readout for blood oxygen adds
+"N% no data" to every night (the store counts the readings per night without building them, `countSpo2`).
+
 **Zoom** on either night card opens the chart explorer on that night (`/chart?metric=spo2&r=day` or `metric=hrv`):
 pinch to zoom, drag to pan, hold to inspect, with the night's heart rate beside the series on its own axis and the
 sleep stages under it, so a dip the heart answers (a breathing event) and one it ignores (the band's arm slept on,

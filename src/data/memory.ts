@@ -222,6 +222,9 @@ export class MemoryStore implements Store {
   async spo2Bounds() {
     return this.spo2.bounds();
   }
+  async countSpo2(spans: readonly { start: number; end: number }[]) {
+    return spans.map((s) => (s.end > s.start ? this.spo2.read(s.start, s.end).length : 0));
+  }
 
   async getScores(day: string) {
     const r = this.scores.get(day);

@@ -79,6 +79,11 @@ export interface Store {
   hrBounds(): Promise<{ first: number; last: number } | null>;
   /** Blood oxygen with lo <= ts < hi, ascending. */
   readSpo2(lo: number, hi: number): Promise<Spo2Sample[]>;
+  /**
+   * How many blood-oxygen readings fall in each span [start, end) (unix seconds), without building the samples: a
+   * night's coverage over months of nights (the explorer's "no data" per night).
+   */
+  countSpo2(spans: readonly { start: number; end: number }[]): Promise<number[]>;
   spo2Bounds(): Promise<{ first: number; last: number } | null>;
 
   // Scores (JSON blobs per day, the pipeline's memo and the screens' source)

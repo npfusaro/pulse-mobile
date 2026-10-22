@@ -9,7 +9,7 @@ import { addDays, fractionalYears } from "@/lib/time";
 import { type FormatKey, type GoodDirection } from "./_lib";
 import { type DayRow, dayStartOf, daySpans, exercisesBetween, finite, firstDay, loadDays, loadSeries, meanSd, ms, type QueryCtx, todayOf } from "./common";
 import { strainCurve } from "./dayStrain";
-import { nightSpo2Of } from "./bloodOxygen";
+import { nightSpo2Of, noDataPct } from "./bloodOxygen";
 import { getHeartRate, getStress } from "./health";
 import { energyBankVM } from "./home";
 import { nightHrvOf } from "./nightHrv";
@@ -162,6 +162,8 @@ export type ChartSeriesVM = {
   /** Mean ± 1 σ of the last 90 days, for metrics that shade a normal range. */
   baseline: { mean: number; sd: number } | null;
   reference: { y: number; label: string } | null;
+  /** Blood oxygen (fork): each night's share of the sleep with no reading, %, for the readout; null elsewhere. */
+  noData?: (number | null)[];
 };
 
 export async function getChartSeries(key: string, ctx: QueryCtx): Promise<ChartSeriesVM> {
@@ -198,7 +200,14 @@ export async function getChartSeries(key: string, ctx: QueryCtx): Promise<ChartS
     if (mean !== null && sd !== undefined && recent.length >= 7) baseline = { mean, sd };
   }
   const reference = def.reference ?? (def.key === "pulse_age" ? { y: fractionalYears(ctx.profile.birthDate, today), label: "Your age" } : null);
-  return { key: def.key, today, days, values, provisional, partial, baseline, reference };
+  // Blood oxygen: how much of each night the band read, so an outlier built from a few good minutes shows as such.
+  let noData: ChartSeriesVM["noData"];
+  if (def.key === "spo2") {
+    const mains = days.map((d) => rows.get(d)?.sleep?.main ?? null);
+    const counts = await ctx.store.countSpo2(mains.map((m) => (m ? { start: m.start, end: m.end } : { start: 0, end: 0 })));
+    noData = mains.map((m, i) => (m && values[i] !== null ? noDataPct(counts[i], m.asleepMin) : null));
+  }
+  return { key: def.key, today, days, values, provisional, partial, baseline, reference, ...(noData && { noData }) };
 }
 
 // ── Intraday views ──────────────────────────────────────────────────────────

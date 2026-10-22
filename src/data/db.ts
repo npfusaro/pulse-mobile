@@ -580,6 +580,28 @@ class SqliteStore implements Store {
   async spo2Bounds() {
     return this.bounds("spo2_days");
   }
+  async countSpo2(spans: readonly { start: number; end: number }[]) {
+    const out = spans.map(() => 0);
+    const live = spans.map((s, i) => ({ ...s, i })).filter((s) => s.end > s.start);
+    if (!live.length) return out;
+    const lo = Math.min(...live.map((s) => s.start));
+    const hi = Math.max(...live.map((s) => s.end));
+    // Offsets only: the values are not needed to count, and parsing them is half the work.
+    const rows = await this.db.getAllAsync<{ bucket: number; offsets: string }>("select bucket, offsets from spo2_days where bucket between ? and ? order by bucket", [bucketOf(lo), bucketOf(hi - 1)]);
+    const sorted = [...live].sort((a, b) => a.start - b.start);
+    for (const r of rows) {
+      await slice();
+      const base = r.bucket * DAY;
+      const dayEnd = base + DAY;
+      const touching = sorted.filter((s) => s.start < dayEnd && s.end > base);
+      if (!touching.length) continue;
+      for (const off of JSON.parse(r.offsets) as number[]) {
+        const ts = base + off;
+        for (const s of touching) if (ts >= s.start && ts < s.end) out[s.i]++;
+      }
+    }
+    return out;
+  }
   /** The first and last sample time of a bucketed table, reading only its two end rows. */
   private async bounds(table: SampleTable) {
     const [lo, hi] = await Promise.all([

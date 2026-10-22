@@ -14,7 +14,8 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 }));
 vi.mock("expo", () => ({ requireOptionalNativeModule: () => ({ isAvailable: () => true, authorize: async () => ({ accessToken: "t", grantedScopes: [] }) }) }));
 
-const { getBloodOxygen } = await import("./bloodOxygen");
+const { getBloodOxygen, noDataPct } = await import("./bloodOxygen");
+const { getChartSeries } = await import("./chart");
 const { getHealthHub } = await import("./health");
 
 const TZ = "Asia/Kolkata";
@@ -59,7 +60,12 @@ describe("getBloodOxygen", () => {
     expect(night.hr!.map((p) => p.t)).toEqual(night.points.map((p) => p.t));
     expect(night.hr!.filter((p) => p.v !== null).length).toBeGreaterThan(night.points.length / 2);
     expect(vm.nights.map((n) => n.day)).toEqual(Array.from({ length: 7 }, (_, k) => addDays(TODAY, k - 6)));
-    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min });
+    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min, noDataPct: night.noDataPct });
+    // The share of the sleep unread: 1 − readings ÷ minutes asleep, whole percent.
+    const { loadDays } = await import("./common");
+    const dayRow = (await loadDays(ctx, TODAY, TODAY)).get(TODAY)!;
+    expect(night.noDataPct).toBe(Math.min(100, Math.max(0, Math.round(100 * (1 - night.readMin / dayRow.sleep!.main!.asleepMin)))));
+    expect(night.noDataPct!).toBeGreaterThan(0);
     // The arm stretches and the signal gaps sit inside the night; their minutes are unions, never double-counted.
     for (const a of night.arm) {
       expect(a.start).toBeGreaterThanOrEqual(night.bed);
@@ -94,7 +100,7 @@ describe("getBloodOxygen", () => {
     const off = await getBloodOxygen(dayAt(SCENARIO.bandOff.day + 1), ctx);
     expect(off.average).toMatchObject({ value: null, reason: "band_not_worn" });
     expect(off.night).toMatchObject({ value: null, reason: "band_not_worn" });
-    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null });
+    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null, noDataPct: null });
     // The night's reason needs the scored night (DayRow.sleep.main), so the bare store is scored too.
     const bare = new MemoryStore();
     await seedDemo(bare, { today: TODAY, timeZone: TZ, now: NOW });
@@ -109,6 +115,28 @@ describe("getBloodOxygen", () => {
     storage.delete("pulse.google.connected");
     expect((await getBloodOxygen(TODAY, ctx)).connected).toBe(false);
     storage.set("pulse.google.connected", "1");
+  });
+
+  it("noDataPct is the unread share of the sleep, clamped, and unknown without minutes asleep", () => {
+    expect(noDataPct(300, 400)).toBe(25);
+    expect(noDataPct(420, 400)).toBe(0);
+    expect(noDataPct(0, 400)).toBe(100);
+    expect(noDataPct(10, 0)).toBeNull();
+    expect(noDataPct(10, null)).toBeNull();
+  });
+
+  it("the explorer's blood-oxygen series carries each night's share unread, matching the night's own; the store counts without reading", async () => {
+    const series = await getChartSeries("spo2", ctx);
+    expect(series.noData).toHaveLength(series.days.length);
+    const i = series.days.indexOf(TODAY);
+    expect(series.noData![i]).toBe((await getBloodOxygen(TODAY, ctx)).night.value!.noDataPct);
+    // A day without a value carries no share.
+    series.values.forEach((v, k) => v === null && expect(series.noData![k]).toBeNull());
+    const night = (await getBloodOxygen(TODAY, ctx)).night.value!;
+    const [n, none] = await store.countSpo2([{ start: night.bed / 1000, end: night.wake / 1000 }, { start: 10, end: 10 }]);
+    expect(n).toBe(night.readMin);
+    expect(none).toBe(0);
+    expect((await getChartSeries("hrv", ctx)).noData).toBeUndefined();
   });
 
   it("the hub card carries last night's average and low", async () => {
