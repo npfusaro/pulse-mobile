@@ -675,6 +675,12 @@ flowchart LR
   JS -->|new domain| SV
 ```
 
+Many days on show are noise at a phone's width, so (fork) a daily window wider than three weeks draws the primary's
+trailing mean (7, 14 or 30 days by the span, `trendDaysFor`) bold as the line and the days behind it as dots and a
+faint trace. The trend is a series of its own on the primary's scale, so the same matrix maps it; the dots are a
+path of zero-length segments, which the round cap turns into dots of the stroke's width at any zoom. The window is
+refit when a gesture settles, like the axes, never per frame.
+
 Docs: [Skia animations](https://shopify.github.io/react-native-skia/docs/animations/animations), [Gesture handler](https://docs.swmansion.com/react-native-gesture-handler/docs/), [Reanimated `withDecay`](https://docs.swmansion.com/react-native-reanimated/docs/animations/withDecay).
 
 ## Tab switches and react-native-svg

@@ -25,6 +25,8 @@ import {
   parseRange,
   pointLabels,
   valueText,
+  trendDaysFor,
+  trendSeries,
   windowFor,
   windowText,
   workoutNotes,
@@ -284,5 +286,27 @@ describe("day views", () => {
     expect(sixHourly.ticks.map((t) => t.text)).toEqual(["00:00", "06:00", "12:00", "18:00", "24:00"]);
     // A night across midnight keeps its clock times.
     expect(levelsFor("day", null, -120, 480).find((l) => l.step === 60)!.ticks[2].text).toBe("00:00");
+  });
+});
+
+describe("the trend line", () => {
+  it("picks a window by the days on show: none for a week, 7, 14 then 30", () => {
+    expect(trendDaysFor(7)).toBe(0);
+    expect(trendDaysFor(30)).toBe(7);
+    expect(trendDaysFor(182)).toBe(14);
+    expect(trendDaysFor(365)).toBe(14);
+    expect(trendDaysFor(1100)).toBe(30);
+  });
+
+  it("is the trailing mean on the same xs, gapped where under half the window was read, and none for a running total", () => {
+    const p: Series = { key: "p", label: "P", format: "int", colorBy: "single", mark: "line", sparse: false, xs: [0, 1, 2, 3, 4, 5], ys: [10, 20, null, 40, null, null] };
+    const t = trendSeries(p, 3)!;
+    expect(t.xs).toEqual(p.xs);
+    expect(t.key).toBe("p:trend");
+    expect(t.label).toBe("3-day average");
+    expect(t.ys).toEqual([10, 15, 15, 30, null, null]);
+    expect(trendSeries({ ...p, cumulative: true }, 3)).toBeNull();
+    expect(trendSeries(p, 1)).toBeNull();
+    expect(trendSeries({ ...p, xs: [0, 1], ys: [1, 2] }, 3)).toBeNull();
   });
 });

@@ -84,6 +84,45 @@ export function alignDaily(primary: ChartSeriesVM, other: ChartSeriesVM): (numbe
 export const DAY_COLOR: Record<DayView, SeriesColor> = { hr: "zones", strain: "strain", stress: "stress", energy: "band", sleep: "single", spo2: "sleep", hrv: "single" };
 const DAY_FIXED: Partial<Record<DayView, [number, number]>> = { stress: [0, 100], energy: [0, 100] };
 
+/**
+ * Days averaged into the trend line over a daily window of `spanDays`: none for a week or so of points, which read
+ * as they are; 7 for up to four months, 14 for up to a year and a bit, 30 beyond. The raw days stay under it as
+ * points and a faint line, so the spread shows without hiding the trend.
+ */
+export function trendDaysFor(spanDays: number): number {
+  if (spanDays <= 21) return 0;
+  if (spanDays <= 120) return 7;
+  if (spanDays <= 400) return 14;
+  return 30;
+}
+
+/** `series` as its trailing `days`-day mean, on the same xs (a running total keeps its own days: no trend). */
+export function trendSeries(series: Series, days: number): Series | null {
+  if (days < 2 || series.cumulative || series.xs.length < days) return null;
+  const ys: (number | null)[] = [];
+  let sum = 0;
+  let n = 0;
+  const window: (number | null)[] = [];
+  for (const y of series.ys) {
+    window.push(y);
+    if (y !== null) {
+      sum += y;
+      n++;
+    }
+    if (window.length > days) {
+      const out = window.shift()!;
+      if (out !== null) {
+        sum -= out;
+        n--;
+      }
+    }
+    // A trend needs most of its window read: fewer than half the days leaves a gap, as the raw line has one. The
+    // series' first days, before a window fills, average what there is.
+    ys.push(n >= (window.length < days ? 1 : Math.ceil(days / 2)) ? sum / n : null);
+  }
+  return { ...series, key: `${series.key}:trend`, label: `${days}-day average`, sparse: false, mark: "line", partial: undefined, ys };
+}
+
 /** A day view: x is minutes from local midnight. */
 export function daySeries(vm: ChartDayVM, label: string, unit: string | undefined, format: FormatKey): Series {
   return {

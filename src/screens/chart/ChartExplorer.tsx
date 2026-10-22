@@ -64,6 +64,8 @@ import {
   summaryOf,
   unitText,
   valueText,
+  trendDaysFor,
+  trendSeries,
   windowFor,
   windowText,
   workoutNotes,
@@ -275,6 +277,9 @@ export default function ChartExplorer() {
   const v = model && home ? (settled && settled.key === viewKey ? settled : { key: viewKey, ...home }) : null;
   const onViewport = React.useCallback((start: number, span: number) => setSettled({ key: viewKey, start, span }), [viewKey]);
   const win = React.useMemo(() => (v ? { start: v.start, span: v.span } : { start: 0, span: 1 }), [v?.start, v?.span]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The trend over the days on show (a daily window; a day view's minutes read as they are), refit when a gesture settles.
+  const trendDays = mode === "daily" && v ? trendDaysFor(v.span) : 0;
+  const trend = React.useMemo(() => (model && trendDays ? trendSeries(model.primary, trendDays) : null), [model, trendDays]);
 
   // --- Axes and summary for the visible window (refit when a gesture settles, never per frame) ---
   const axes = React.useMemo(() => {
@@ -382,6 +387,7 @@ export default function ChartExplorer() {
                 height={box.h}
                 mode={mode}
                 primary={model.primary}
+                trend={trend}
                 compare={model.compare}
                 extent={model.extent}
                 window={win}
@@ -447,7 +453,9 @@ export default function ChartExplorer() {
                 </Press>
               ))}
           </View>
-          {model?.shade && <Text className="text-[13px] leading-5 text-muted-foreground">{model.shade.label}</Text>}
+          {(model?.shade || trend) && (
+            <Text className="text-[13px] leading-5 text-muted-foreground">{[model?.shade?.label, trend ? `Bold line: ${trendDays}-day average; dots: each day` : null].filter(Boolean).join(" · ")}</Text>
+          )}
         </View>
       </View>
     </View>

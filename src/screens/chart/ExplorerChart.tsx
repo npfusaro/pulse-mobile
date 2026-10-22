@@ -76,6 +76,11 @@ export type ExplorerChartProps = {
   height: number;
   mode: "daily" | "day";
   primary: Series;
+  /**
+   * The primary's trailing mean on the same xs (model.ts trendSeries), when the days on show are too many to read
+   * raw: drawn bold as the line, the days behind it as dots and a faint trace. Null draws the primary as the line.
+   */
+  trend?: Series | null;
   compare: Series | null;
   extent: { min: number; max: number; minSpan: number };
   /** The viewport JS last knew (the range's window, or where a gesture settled); a change animates there. */
@@ -149,7 +154,7 @@ const TICK_GAP = 42;
  * hours): the curve is the same, with far fewer segments to map each frame.
  */
 function dataPaths(series: Series | null, range?: { lo: number; hi: number }) {
-  const empty = { line: Skia.Path.Make(), area: Skia.Path.Make(), lo: 0, hi: 1 };
+  const empty = { line: Skia.Path.Make(), area: Skia.Path.Make(), dots: Skia.Path.Make(), lo: 0, hi: 1 };
   if (!series) return empty;
   const vals = series.ys.filter((v): v is number => v !== null);
   if (!vals.length) return empty;
@@ -173,7 +178,9 @@ function dataPaths(series: Series | null, range?: { lo: number; hi: number }) {
     line += d;
     area += `${d}L${r[r.length - 1].x} -100000L${r[0].x} -100000Z`;
   }
-  return { line: Skia.Path.MakeFromSVGString(line) ?? Skia.Path.Make(), area: Skia.Path.MakeFromSVGString(area) ?? Skia.Path.Make(), lo, hi };
+  // Every read day as a zero-length segment: the round cap makes it a dot of the stroke's width at any zoom.
+  const dots = pts.flatMap((q) => (q.y === null ? [] : [`M${q.x} ${q.y}L${q.x + 0.001} ${q.y}`])).join("");
+  return { line: Skia.Path.MakeFromSVGString(line) ?? Skia.Path.Make(), area: Skia.Path.MakeFromSVGString(area) ?? Skia.Path.Make(), dots: Skia.Path.MakeFromSVGString(dots) ?? Skia.Path.Make(), lo, hi };
 }
 
 function paint(color: string, stroke?: { width: number; dash?: number[]; round?: boolean }): SkPaint {
@@ -289,6 +296,8 @@ export function ExplorerChart(p: ExplorerChartProps) {
 
   // --- Series geometry (data space, built once per series) ---
   const prim = React.useMemo(() => dataPaths(p.primary), [p.primary]);
+  // The trend on the primary's scale, so one matrix maps both.
+  const trendPaths = React.useMemo(() => (p.trend ? dataPaths(p.trend, prim) : null), [p.trend, prim]);
   const comp = React.useMemo(() => dataPaths(p.compare), [p.compare]);
   // The workouts day: the minutes inside a workout as a series of their own, on the primary's scale.
   const hotPaths = React.useMemo(
@@ -307,6 +316,9 @@ export function ExplorerChart(p: ExplorerChartProps) {
   const lineM = useDerivedValue(() => toScreen(start.value, span.value, lo.value, hi.value, prim.lo, prim.hi));
   const line = useDerivedValue(() => Skia.PathBuilder.MakeFromPath(prim.line).transform(lineM.value).detach());
   const area = useDerivedValue(() => Skia.PathBuilder.MakeFromPath(prim.area).transform(lineM.value).detach());
+  const dots = useDerivedValue(() => (trendPaths ? Skia.PathBuilder.MakeFromPath(prim.dots).transform(lineM.value).detach() : empties[1]));
+  const trendLine = useDerivedValue(() => (trendPaths ? Skia.PathBuilder.MakeFromPath(trendPaths.line).transform(lineM.value).detach() : empties[2]));
+  const trendArea = useDerivedValue(() => (trendPaths ? Skia.PathBuilder.MakeFromPath(trendPaths.area).transform(lineM.value).detach() : empties[3]));
   const hotLine = useDerivedValue(() => (hotPaths ? Skia.PathBuilder.MakeFromPath(hotPaths.line).transform(lineM.value).detach() : empties[0]));
   const hotArea = useDerivedValue(() => (hotPaths ? Skia.PathBuilder.MakeFromPath(hotPaths.area).transform(lineM.value).detach() : empties[0]));
   const line2 = useDerivedValue(() => Skia.PathBuilder.MakeFromPath(comp.line).transform(toScreen(start.value, span.value, lo2.value, hi2.value, comp.lo, comp.hi)).detach());
@@ -804,6 +816,18 @@ export function ExplorerChart(p: ExplorerChartProps) {
                         <LinearGradient start={vec(0, top)} end={vec(0, bottom)} colors={[alpha(k.workout, 0.2), alpha(k.workout, 0)]} />
                       </Path>
                       <Path path={hotLine} style="stroke" strokeWidth={LINE.width} strokeJoin="round" strokeCap="round" color={p.lineColor}>
+                        {stops && <LinearGradient start={gStart} end={gEnd} colors={stops.map((s) => s.color)} positions={stops.map((s) => s.offset)} />}
+                      </Path>
+                    </Group>
+                  ) : trendPaths ? (
+                    // Many days on show: the days as dots and a faint trace, the trailing average bold as the line.
+                    <Group>
+                      <Path path={trendArea}>
+                        <LinearGradient start={vec(0, top)} end={vec(0, bottom)} colors={[alpha(p.bands ? fg : p.lineColor, p.bands ? 0.08 : 0.14), alpha(p.bands ? fg : p.lineColor, 0)]} />
+                      </Path>
+                      <Path path={line} style="stroke" strokeWidth={1} strokeJoin="round" strokeCap="round" color={alpha(p.lineColor, 0.28)} />
+                      <Path path={dots} style="stroke" strokeWidth={3} strokeCap="round" color={alpha(p.lineColor, 0.5)} />
+                      <Path path={trendLine} style="stroke" strokeWidth={LINE.width + 0.5} strokeJoin="round" strokeCap="round" color={p.lineColor}>
                         {stops && <LinearGradient start={gStart} end={gEnd} colors={stops.map((s) => s.color)} positions={stops.map((s) => s.offset)} />}
                       </Path>
                     </Group>
