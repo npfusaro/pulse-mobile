@@ -70,6 +70,9 @@ const HEIGHT = 200;
 const AXIS_H = 30;
 const MAX_BAR = 28;
 
+/** Days averaged on the long ranges, where the daily points are too many to read. */
+const LONG_RANGE_SMOOTH: Partial<Record<TrendRange, number>> = { "6m": 7, "1y": 14 };
+
 function trailingMean(points: TrendPoint[], i: number, days: number) {
   const xs = points.slice(Math.max(0, i - days + 1), i + 1).flatMap((x) => (x.value === null ? [] : [x.value]));
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
@@ -102,12 +105,16 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
   const [x, setX] = useState<number | null>(null);
 
   const n = RANGE_DAYS[range];
+  // The long ranges smooth themselves: 180 or 365 daily points across a phone's width are noise, so the trailing
+  // average (7 days over six months, 14 over a year) is the line, the days behind it faint. A metric's own `smooth`
+  // (weight's 7-day average) applies in every range.
+  const smoothDays = p.smooth ?? LONG_RANGE_SMOOTH[range] ?? null;
   const rows = points.slice(-n).map((pt, i) => ({
     ...pt,
     fill: pt.value === null ? undefined : css(colorFor(p.colorBy, pt.value)),
     fillOpacity: pt.provisional ? 0.45 : 1,
     text: pt.value === null ? "" : formatValue(p.format, pt.value),
-    smooth: p.smooth ? trailingMean(points, points.length - Math.min(n, points.length) + i, p.smooth) : null,
+    smooth: smoothDays ? trailingMean(points, points.length - Math.min(n, points.length) + i, smoothDays) : null,
   }));
   const values = rows.map((r) => r.value).filter((v): v is number => v !== null);
   const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
@@ -174,7 +181,7 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
             const lineDraw = line ? linePath(rows.map((r, i) => ({ x: xs[i], y: r.value === null ? null : y(r.value) })), p.line ? "linear" : "monotone") : "";
             const areaDraw = line ? areaPath(rows.map((r, i) => ({ x: xs[i], y: r.value === null ? null : y(r.value) })), y1, p.line ? "linear" : "monotone") : "";
             const lineColor = bands ? bandPaint(hi, lo, bands, y, css) : { color: c["foreground-secondary"] };
-            const smoothDraw = p.smooth ? linePath(rows.flatMap((r, i) => (r.smooth === null ? [] : [{ x: xs[i], y: y(r.smooth) }])), "monotone") : "";
+            const smoothDraw = smoothDays ? linePath(rows.flatMap((r, i) => (r.smooth === null ? [] : [{ x: xs[i], y: y(r.smooth) }])), "monotone") : "";
             const avgColor = css(colorFor(p.colorBy, avg ?? 0));
             const UNSPLIT = c["muted-foreground"];
 
@@ -195,6 +202,7 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
           <ValueUnit value={formatValue(p.format, scrubbed || byDay ? (shown?.value ?? null) : avg)} unit={p.unit} className="font-numeric text-[28px] font-bold leading-8" />
           {p.stack && <StackLegend series={p.stack} point={scrubbed || byDay ? shown : { date: "", value: avg, parts: Object.fromEntries(p.stack.map((s) => [s.key, partAvg(s.key) ?? 0])) }} format={p.format} />}
           {shown?.provisional && <Text className="mt-1 text-xs font-medium text-muted-foreground">{p.stack ? "So far" : "Provisional"}</Text>}
+          {scrubbed && smoothDays && shown?.smooth != null && <Text className="mt-1 text-xs font-medium text-muted-foreground">{`${smoothDays}-day average ${formatValue(p.format, shown.smooth)}${p.unit === "%" ? "%" : p.unit ? ` ${p.unit}` : ""}`}</Text>}
           {!scrubbed && !byDay && delta !== null && (
             <View className="mt-1">
               <StatusChip tone={tone === "good" ? "optimal" : tone === "bad" ? "warning" : "neutral"} delta={delta > 0 ? "up" : delta < 0 ? "down" : "flat"}>
@@ -237,8 +245,9 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
                   {aRow && line && <DashedLine x1={xs[ai]} x2={xs[ai]} y1={y0} y2={y1} color={c["chart-cursor"]} />}
                   {aRow && !line && <RoundedRect x={xs[ai] - band.step / 2} y={y0} width={band.step} height={y1 - y0} r={0} color={alpha(c.foreground, 0.05)} />}
 
-                  {line && <FadeFill path={areaDraw} color={bands ? c.foreground : avgColor} y0={y(hi)} y1={y1} from={0.18} to={0} />}
-                  {line && <StrokePath path={lineDraw} width={bands ? 2 : 1.5} paint={lineColor} />}
+                  {/* With a smoothed line on top, the daily line steps back: thin, faint, no fill; the average is the line. */}
+                  {line && !smoothDraw && <FadeFill path={areaDraw} color={bands ? c.foreground : avgColor} y0={y(hi)} y1={y1} from={0.18} to={0} />}
+                  {line && <StrokePath path={lineDraw} width={smoothDraw ? 1 : bands ? 2 : 1.5} paint={lineColor} opacity={smoothDraw ? 0.35 : 1} />}
                   {line &&
                     rows.map((r, i) => {
                       if (r.value === null || !r.fill) return null;
@@ -299,7 +308,7 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
                         </Group>
                       );
                     })}
-                  {smoothDraw && <StrokePath path={smoothDraw} width={2} paint={{ color: c.foreground }} />}
+                  {smoothDraw && <StrokePath path={smoothDraw} width={2} paint={line && !bands ? lineColor : { color: c.foreground }} />}
                   {aRow && line && aRow.value !== null && aRow.fill && <GlowDot x={xs[ai]} y={y(aRow.value)} fill={aRow.fill} />}
                 </PlotCanvas>
 
@@ -334,8 +343,10 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
           }}
         </ChartFigure>
       )}
-      {(p.baseline || p.target || p.smooth) && values.length > 0 && (
-        <Text className="mt-2 text-xs font-medium leading-4 text-muted-foreground">{p.target ? "Shaded: your Strain Target" : p.baseline ? "Shaded: your normal range" : `Line: ${p.smooth}-day average`}</Text>
+      {(p.baseline || p.target || smoothDays) && values.length > 0 && (
+        <Text className="mt-2 text-xs font-medium leading-4 text-muted-foreground">
+          {[p.target ? "Shaded: your Strain Target" : p.baseline ? "Shaded: your normal range" : null, smoothDays ? `Bold line: ${smoothDays}-day average` : null].filter(Boolean).join(" · ")}
+        </Text>
       )}
     </View>
   );
