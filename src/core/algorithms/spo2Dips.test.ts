@@ -2,7 +2,7 @@
 // with the heart flat is flat, one with no heart rate around it is unknown; shallow wobbles are not dips; gaps
 // inside a dip do not end it; dips a minute apart merge; unreadable minutes count in runs.
 import { describe, expect, it } from "vitest";
-import { findSpo2Dips, spo2DipConfig, spo2GapMinutes, summarizeSpo2Dips } from "./spo2Dips";
+import { cleanAverage, findArmStretches, findSpo2Dips, spo2DipConfig, spo2GapMinutes, summarizeSpo2Dips } from "./spo2Dips";
 
 const T0 = Date.parse("2026-10-20T03:00:00Z");
 const MIN = 60_000;
@@ -79,5 +79,52 @@ describe("spo2GapMinutes and the summary", () => {
     const hr = series(58, (i) => (i >= 72 && i < 76 ? 70 : undefined));
     expect(summarizeSpo2Dips(findSpo2Dips(spo2, hr, bed, wake), 12)).toEqual({ dips: 2, answered: 1, flat: 1, unknown: 0, gapMin: 12 });
     expect(spo2DipConfig.dropPct).toBe(3);
+  });
+});
+
+describe("findArmStretches and cleanAverage", () => {
+  /** A night at 97 with a slow sag to 93 from minute 30 to 90, back by 100. */
+  const sag = (i: number) => (i >= 30 && i < 40 ? 97 - ((i - 30) * 4) / 10 : i >= 40 && i < 90 ? 93 + ((i * 3) % 3) / 10 : i >= 90 && i < 100 ? 93 + ((i - 90) * 4) / 10 : undefined);
+
+  it("a slow sag with the heart quiet is an arm stretch; the dip rule never saw it", () => {
+    const spo2 = series(97, sag);
+    expect(findSpo2Dips(spo2, flatHr, bed, wake)).toEqual([]);
+    const arm = findArmStretches(spo2, flatHr, bed, wake);
+    expect(arm).toHaveLength(1);
+    expect((arm[0].start - T0) / MIN).toBeGreaterThanOrEqual(36);
+    expect((arm[0].start - T0) / MIN).toBeLessThanOrEqual(40);
+    expect((arm[0].end - T0) / MIN).toBeGreaterThanOrEqual(90);
+    expect((arm[0].end - T0) / MIN).toBeLessThanOrEqual(96);
+    expect(arm[0].meanPct).toBeLessThan(94);
+    expect(arm[0].drop).toBeGreaterThanOrEqual(3);
+    expect(arm[0].gapMin).toBe(0);
+  });
+
+  it("the same sag with the heart rate up through it is not the arm; without heart rate nothing is called", () => {
+    const spo2 = series(97, sag);
+    const busy = series(58, (i) => (i >= 40 && i < 90 ? 66 : undefined));
+    expect(findArmStretches(spo2, busy, bed, wake)).toEqual([]);
+    expect(findArmStretches(spo2, null, bed, wake)).toEqual([]);
+  });
+
+  it("a short low run is left to the dip rule; unread minutes inside a stretch ride along and are counted", () => {
+    expect(findArmStretches(series(97, (i) => (i >= 50 && i < 56 ? 92 : undefined)), flatHr, bed, wake)).toEqual([]);
+    const holed = series(97, (i) => (i >= 60 && i < 66 ? null : sag(i)));
+    const arm = findArmStretches(holed, flatHr, bed, wake);
+    expect(arm).toHaveLength(1);
+    expect(arm[0].gapMin).toBe(6);
+  });
+
+  it("cleanAverage leaves out the arm stretches and the flat dips, keeps the answered ones", () => {
+    const spo2 = series(97, (i) => sag(i) ?? (i >= 110 && i < 113 ? 92 : undefined));
+    const hr = series(58, (i) => (i >= 111 && i < 115 ? 70 : undefined)); // the late dip is answered
+    const arm = findArmStretches(spo2, hr, bed, wake);
+    const dips = findSpo2Dips(spo2, hr, bed, wake);
+    expect(dips.map((d) => d.hr)).toEqual(["answered"]);
+    const clean = cleanAverage(spo2, bed, wake, arm, dips)!;
+    const raw = spo2.map((p) => p.v!).reduce((a, b) => a + b, 0) / spo2.length;
+    expect(clean).toBeGreaterThan(raw);
+    expect(clean).toBeLessThan(97); // the answered dip and the sag's shoulders stay in
+    expect(cleanAverage(spo2, bed, wake, [{ start: bed, end: wake, readMin: 0, gapMin: 0, meanPct: 0, drop: 0 }], [])).toBeNull();
   });
 });

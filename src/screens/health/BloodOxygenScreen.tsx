@@ -28,8 +28,8 @@ import { BLOOD_OXYGEN_INFO } from "./info";
 
 const HREF = "/health/blood-oxygen";
 const GOOGLE_SETTINGS = "/settings?s=source";
-/** Nearly every night dips under 95% for a minute, so only half an hour under 95% is toned in the week. */
-const UNDER_NOTABLE_MIN = 30;
+/** Half an hour or more of the arm on the sensor is toned in the week; a few minutes is every night. */
+const ARM_NOTABLE_MIN = 30;
 
 /** The night's average over its low, its minutes under 95% and how many minutes the band read. */
 function Hero({ vm }: { vm: BloodOxygenVM }) {
@@ -53,17 +53,27 @@ function Hero({ vm }: { vm: BloodOxygenVM }) {
           </>
         )}
       >
-        {(avg) => (
-          <>
-            <ValueUnit value={avg.toFixed(1)} unit="%" className={big} unitClassName={unit} />
-            <Text className={CAPTION}>{vm.isToday ? "Last night’s average" : "Night average"}</Text>
-            {vm.chip && (
-              <StatusChip tone={vm.chip.tone} className="mt-1">
-                {vm.chip.text}
-              </StatusChip>
-            )}
-          </>
-        )}
+        {(avg) => {
+          const clean = vm.night.value?.cleanAverage ?? null;
+          const armMin = vm.night.value?.armMin ?? 0;
+          return (
+            <>
+              <ValueUnit value={avg.toFixed(1)} unit="%" className={big} unitClassName={unit} />
+              <Text className={CAPTION}>{vm.isToday ? "Last night’s average" : "Night average"}</Text>
+              {vm.chip && (
+                <StatusChip tone={vm.chip.tone} className="mt-1">
+                  {vm.chip.text}
+                </StatusChip>
+              )}
+              {/* The average with the arm's minutes taken out, when they moved it: Fitbit's number includes them. */}
+              {clean !== null && armMin > 0 && Math.abs(clean - avg) >= 0.1 && (
+                <Text className={cn(CAPTION, "mt-1")} accessibilityLabel={`Without the arm: ${clean.toFixed(1)} percent`}>
+                  Without the arm <Text className="font-numeric font-bold tabular-nums text-foreground">{clean.toFixed(1)}%</Text>
+                </Text>
+              )}
+            </>
+          );
+        }}
       </MetricState>
       <View className="mt-4 w-full flex-row gap-3">
         {stats.map((s) => (
@@ -90,10 +100,11 @@ function Dips({ vm }: { vm: BloodOxygenVM }) {
   const noHr = n.hr === null;
   const stats = [
     { label: "Breathing", value: noHr ? MISSING : String(d.answered), spoken: noHr ? "unknown, no heart rate" : `${d.answered} dips the heart rate answered`, tone: d.answered > 0 ? "text-warning-text" : "" },
-    { label: "Arm", value: noHr ? MISSING : String(d.flat), spoken: noHr ? "unknown, no heart rate" : `${d.flat} dips with the heart rate flat`, tone: "" },
+    { label: "Arm dips", value: noHr ? MISSING : String(d.flat), spoken: noHr ? "unknown, no heart rate" : `${d.flat} dips with the heart rate flat`, tone: "" },
+    { label: "Arm", value: noHr ? MISSING : String(n.armMin), unit: "min", spoken: noHr ? "unknown, no heart rate" : `${n.armMin} minutes the arm held the sensor low`, tone: "" },
     { label: "Unreadable", value: String(d.gapMin), unit: "min", spoken: `${d.gapMin} minutes the band could not read`, tone: "" },
   ];
-  const line =
+  const dipsLine =
     d.dips === 0
       ? "No dips of 3% or more this night."
       : noHr
@@ -103,9 +114,13 @@ function Dips({ vm }: { vm: BloodOxygenVM }) {
           : d.flat === 0 && d.unknown === 0
             ? `${d.dips} ${d.dips === 1 ? "dip" : "dips"} of 3% or more, every one answered by a heart-rate rise: breathing events, not the arm.`
             : `${d.dips} dips of 3% or more: ${d.answered} answered by a heart-rate rise (breathing), ${d.flat} with the heart rate flat (the arm, most likely)${d.unknown ? `, ${d.unknown} with no heart rate to say` : ""}.`;
+  const armLine =
+    noHr || n.armMin === 0
+      ? null
+      : `The arm held the sensor low for ${n.armMin} minutes in ${n.arm.length === 1 ? "one stretch" : `${n.arm.length} stretches`} (shaded on the chart)${n.cleanAverage !== null && vm.average.value !== null && Math.abs(n.cleanAverage - vm.average.value) >= 0.1 ? `; without them the night averages ${n.cleanAverage.toFixed(1)}%, against ${vm.average.value.toFixed(1)}% with them` : ""}.`;
   return (
     <View className="gap-3">
-      <Text className="text-[15px] leading-[22px]">{line}</Text>
+      <Text className="text-[15px] leading-[22px]">{armLine ? `${dipsLine} ${armLine}` : dipsLine}</Text>
       <View className="flex-row gap-3">
         {stats.map((s) => (
           <View key={s.label} accessible accessibilityLabel={`${s.label}: ${s.spoken}`} className="flex-1 items-center">
@@ -132,28 +147,28 @@ function Week({ vm, today }: { vm: BloodOxygenVM; today: string }) {
     <View>
       <View className="flex-row items-end pb-2">
         <Text className={cn(HEAD, "flex-1")}>Night</Text>
-        <Text className={cn(HEAD, "w-14 text-right")}>Avg</Text>
-        <Text className={cn(HEAD, "w-16 text-right")}>Under 95%</Text>
+        <Text className={cn(HEAD, "w-12 text-right")}>Avg</Text>
+        <Text className={cn(HEAD, "w-14 text-right")}>No arm</Text>
         <Text className={cn(HEAD, "w-16 text-right")}>Breathing</Text>
-        <Text className={cn(HEAD, "w-10 text-right")}>Arm</Text>
+        <Text className={cn(HEAD, "w-14 text-right")}>Arm</Text>
         <View className="w-6" />
       </View>
       {vm.nights.map((n) => {
         const current = n.day === vm.day;
-        const underTone = n.below95Min !== null && n.below95Min >= UNDER_NOTABLE_MIN;
+        const armTone = n.armMin !== null && n.armMin >= ARM_NOTABLE_MIN;
         return (
           <Press
             key={n.day}
             accessibilityRole="link"
-            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}, low ${n.low ?? "none"}, ${n.below95Min ?? 0} minutes under 95 percent, ${n.answered ?? 0} dips the heart rate answered, ${n.flat ?? 0} with it flat`}
+            accessibilityLabel={`${n.day === today ? "Last night" : formatDay(n.day, DAY.long)}: average ${n.average === null ? "no readings" : `${n.average.toFixed(1)} percent`}${n.cleanAverage !== null ? `, ${n.cleanAverage.toFixed(1)} without the arm` : ""}, ${n.answered ?? 0} dips the heart rate answered, the arm ${n.armMin ?? 0} minutes`}
             onPress={() => push(dayHref(HREF, n.day, today))}
             className="flex-row items-center border-t border-border py-2.5"
           >
             <Text className={cn("flex-1 text-[15px] leading-5", current ? "font-bold" : "font-medium text-foreground-secondary")}>{n.day === today ? "Last night" : formatDay(n.day, DAY.short)}</Text>
-            <Text className={cn(CELL, "w-14 text-right")}>{n.average !== null ? `${n.average.toFixed(1)}` : MISSING}</Text>
-            <Text className={cn(CELL, "w-16 text-right", underTone ? "text-warning-text" : "text-foreground-secondary")}>{n.below95Min !== null ? `${n.below95Min} min` : MISSING}</Text>
+            <Text className={cn(CELL, "w-12 text-right")}>{n.average !== null ? `${n.average.toFixed(1)}` : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right text-foreground-secondary")}>{n.cleanAverage !== null ? `${n.cleanAverage.toFixed(1)}` : MISSING}</Text>
             <Text className={cn(CELL, "w-16 text-right", n.answered ? "text-warning-text" : "text-foreground-secondary")}>{n.answered !== null ? String(n.answered) : MISSING}</Text>
-            <Text className={cn(CELL, "w-10 text-right text-foreground-secondary")}>{n.flat !== null ? String(n.flat) : MISSING}</Text>
+            <Text className={cn(CELL, "w-14 text-right", armTone ? "text-foreground" : "text-foreground-secondary")}>{n.armMin !== null ? `${n.armMin} min` : MISSING}</Text>
             <View className="w-6 items-end">
               <Icon icon={ChevronRight} size={16} tone="muted-foreground" strokeWidth={2} />
             </View>
@@ -168,7 +183,7 @@ export function BloodOxygenScreen() {
   const { data, error, reload } = useDayScreen("bloodOxygen", getBloodOxygen);
   const vm = data?.vm;
   const series = useMemo(
-    () => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low, hr: vm.night.value.hr, dips: vm.night.value.dips }, reason: null, provisional: false } : vm.night),
+    () => vm && (vm.night.value ? { value: { bed: vm.night.value.bed, wake: vm.night.value.wake, points: vm.night.value.points, low: vm.night.value.low, hr: vm.night.value.hr, dips: vm.night.value.dips, arm: vm.night.value.arm }, reason: null, provisional: false } : vm.night),
     [vm],
   );
   if (!data || !vm || !series) return error ? <ErrorView detail retry={reload} /> : <BloodOxygenLoading />;
@@ -207,12 +222,12 @@ export function BloodOxygenScreen() {
                 title="Dips"
                 info={{
                   title: "Breathing or the arm",
-                  body: "A dip is a fall of 3% or more under the previous ten minutes. The heart gives it away: when the airway narrows, the heart rate jumps within a minute or two of the low as you rouse (counted as Breathing); when the arm the band is on is slept on, the sensor loses blood flow, reads low, and the heart rate stays flat (counted as Arm). Unreadable minutes are stretches of two or more the band threw away, which a crushed arm also causes. A count, not a diagnosis: nights with many answered dips are worth a conversation with a doctor.",
+                  body: "A dip is a fall of 3% or more under the previous ten minutes. The heart gives it away: when the airway narrows, the heart rate jumps within a minute or two of the low as you rouse (counted as Breathing); when the arm the band is on is slept on, the sensor loses blood flow, reads low, and the heart rate stays flat (counted as Arm dips). The arm also sags the reading slowly and holds it low for an hour or more, which no dip rule sees, so a stretch of ten minutes or longer sitting 3% under the night’s good level with the heart rate quiet is counted as Arm minutes and shaded on the chart; the average without those minutes stands beside Fitbit’s, which includes them. Unreadable minutes are stretches of two or more the band threw away, which a crushed arm also causes. Counts, not a diagnosis: nights with many answered dips are worth a conversation with a doctor.",
                 }}
               >
                 <Dips vm={vm} />
               </SectionShell>,
-              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average, how many minutes sat under 95%, and its dips split by the heart’s answer: Breathing (the heart rate rose) and Arm (it stayed flat). Tap a night to see it." }}>
+              <SectionShell key="week" variant="card" title="This week" info={{ title: "Seven nights", body: "Each night’s average as Fitbit gives it, the average with the arm’s minutes taken out, the dips the heart rate answered (Breathing), and the minutes the arm held the sensor low. Tap a night to see it." }}>
                 <Week vm={vm} today={today} />
               </SectionShell>,
             ]
@@ -233,7 +248,7 @@ const LOADING_SECONDARY = [
     <View accessibilityElementsHidden className="gap-3">
       <SkeletonText className="w-full" />
       <View className="flex-row gap-3">
-        {["Breathing", "Arm", "Unreadable"].map((w) => (
+        {["Breathing", "Arm dips", "Arm", "Unreadable"].map((w) => (
           <View key={w} className="flex-1 items-center">
             <SkeletonText lh={24} fs={20} className="w-[42px]" />
             <Text className={cn(LABEL, "mt-1 text-muted-foreground")}>{w}</Text>

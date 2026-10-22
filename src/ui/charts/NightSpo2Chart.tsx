@@ -5,7 +5,8 @@
 // with the heart rate flat is the band's arm being slept on.
 import { useMemo, useState } from "react";
 import { View } from "react-native";
-import { Circle } from "@shopify/react-native-skia";
+import { Circle, Rect } from "@shopify/react-native-skia";
+import { alpha } from "../color";
 import { clock } from "@/lib/format";
 import type { Metric } from "@/lib/reasons";
 import { ReasonPlaceholder } from "../metrics/ReasonPlaceholder";
@@ -30,6 +31,8 @@ export type NightSpo2Series = {
   hr?: { t: number; v: number | null }[] | null;
   /** The night's dips, each marked at its nadir: a ring in the warning colour when the heart answered, muted when not. */
   dips?: { nadir: { t: number; v: number }; hr: "answered" | "flat" | "unknown" }[];
+  /** The arm stretches (a slow sag with the heart quiet), shaded across the plot. */
+  arm?: { start: number; end: number }[];
 };
 
 export type NightSpo2ChartProps = { data: Metric<NightSpo2Series> | null | undefined };
@@ -67,6 +70,7 @@ function Chart({ s }: { s: NightSpo2Series }) {
   const [x, setX] = useState<number | null>(null);
   const { bed, wake, points, low } = s;
   const dips = s.dips ?? [];
+  const arm = s.arm ?? [];
   const hr = s.hr?.length ? s.hr : null;
   const hrByT = useMemo(() => new Map((hr ?? []).map((p) => [p.t, p.v])), [hr]);
   const hrAxis = hrTicks((hr ?? []).map((p) => p.v));
@@ -110,6 +114,10 @@ function Chart({ s }: { s: NightSpo2Series }) {
           <>
             <PlotCanvas width={width} height={height}>
               <GridLines ys={yTicks.map(y)} x0={x0} x1={x1} />
+              {/* The arm stretches: a muted wash across the plot, so the sag reads as a position, not a breathing problem. */}
+              {arm.map((a) => (
+                <Rect key={a.start} x={tx(a.start)} y={y0} width={Math.max(1, tx(a.end) - tx(a.start))} height={y1 - y0} color={alpha(c["muted-foreground"], 0.12)} />
+              ))}
               {/* Heart rate in the Sleep page's neutral, not strain's blue: it must read apart from the SpO2 blue. */}
               {hrPath && <StrokePath path={hrPath} width={1} paint={{ color: c.foreground }} opacity={0.55} />}
               {/* The 95% line only when the axis reaches under it: a steady night is not drawn against a threshold it never neared. */}

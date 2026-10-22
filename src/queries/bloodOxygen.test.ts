@@ -59,7 +59,16 @@ describe("getBloodOxygen", () => {
     expect(night.hr!.map((p) => p.t)).toEqual(night.points.map((p) => p.t));
     expect(night.hr!.filter((p) => p.v !== null).length).toBeGreaterThan(night.points.length / 2);
     expect(vm.nights.map((n) => n.day)).toEqual(Array.from({ length: 7 }, (_, k) => addDays(TODAY, k - 6)));
-    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min, answered: night.dipSummary.answered, flat: night.dipSummary.flat });
+    expect(vm.nights.at(-1)).toEqual({ day: TODAY, average: vm.average.value, low: night.low.v, below95Min: night.below95Min, answered: night.dipSummary.answered, flat: night.dipSummary.flat, armMin: night.armMin, cleanAverage: night.cleanAverage });
+    // The arm stretches sit inside the night, their minutes add up, and the clean average leaves them (and the flat dips) out.
+    for (const a of night.arm) {
+      expect(a.start).toBeGreaterThanOrEqual(night.bed);
+      expect(a.end).toBeLessThanOrEqual(night.wake);
+      expect(a.readMin + a.gapMin).toBeGreaterThanOrEqual(10);
+    }
+    expect(night.armMin).toBe(night.arm.reduce((s, a) => s + a.readMin + a.gapMin, 0));
+    expect(night.cleanAverage).not.toBeNull();
+    if (night.armMin > 0 || night.dipSummary.flat > 0) expect(night.cleanAverage!).toBeGreaterThanOrEqual(night.points.filter((p) => p.v !== null && p.t >= night.bed && p.t < night.wake).reduce((s, p, _, xs) => s + p.v! / xs.length, 0) - 0.05);
     // The night's dips, each judged by the heart (the seed carries heart rate, so none is unknown), in time order.
     expect(night.dipSummary.dips).toBe(night.dips.length);
     expect(night.dipSummary.answered + night.dipSummary.flat + night.dipSummary.unknown).toBe(night.dips.length);
@@ -84,7 +93,7 @@ describe("getBloodOxygen", () => {
     const off = await getBloodOxygen(dayAt(SCENARIO.bandOff.day + 1), ctx);
     expect(off.average).toMatchObject({ value: null, reason: "band_not_worn" });
     expect(off.night).toMatchObject({ value: null, reason: "band_not_worn" });
-    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null, answered: null, flat: null });
+    expect(off.nights.at(-1)).toEqual({ day: dayAt(SCENARIO.bandOff.day + 1), average: null, low: null, below95Min: null, answered: null, flat: null, armMin: null, cleanAverage: null });
     // The night's reason needs the scored night (DayRow.sleep.main), so the bare store is scored too.
     const bare = new MemoryStore();
     await seedDemo(bare, { today: TODAY, timeZone: TZ, now: NOW });
